@@ -1,0 +1,1455 @@
+<!DOCTYPE html>
+<!-- review.html — 文档审阅页：分段批注 + 反馈回传发起终端（v2，token-based） -->
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <!-- 允许双指放大：Word/PDF 版式预览在手机上会整页缩到屏宽，字小时要能放大看 -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>审阅</title>
+  <link rel="stylesheet" href="lib/katex.min.css">
+  <style>
+    :root {
+      --primary: #2563eb; --primary-light: #dbeafe; --primary-hover: #1d4ed8;
+      --accent: #7c3aed; --accent-light: #ede9fe;
+      --text: #1e293b; --text-sec: #4b5563; --text-muted: #9ca3af;
+      --bg: #f4f5f7; --card: #fff; --border: #e5e7eb;
+      --danger: #dc2626; --success: #16a34a;
+      --radius: 12px; --radius-sm: 8px;
+      --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif;
+      --mono: "SF Mono", "Fira Code", Consolas, monospace;
+      --safe-bottom: env(safe-area-inset-bottom, 0px);
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: var(--font); color: var(--text); background: var(--bg); min-height: 100vh; }
+
+    /* Header */
+    .rv-header {
+      position: sticky; top: 0; z-index: 50;
+      display: flex; align-items: center; gap: 10px;
+      height: 48px; padding: 0 16px;
+      background: var(--card); border-bottom: 1px solid var(--border);
+      font-weight: 600; font-size: 15px;
+    }
+    .rv-header-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .rv-header-badge {
+      font-size: 11px; padding: 2px 8px; border-radius: 10px;
+      background: var(--accent-light); color: var(--accent); font-weight: 600;
+    }
+
+    /* Content */
+    #rv-content { padding: 8px 12px 100px; }
+    .rv-block {
+      padding: 8px 12px; margin: 2px 0;
+      border-left: 3px solid transparent; border-radius: 4px;
+      cursor: pointer; transition: all 0.15s;
+      font-size: 16px; line-height: 1.8; color: var(--text-sec);
+    }
+    .rv-block:active { background: #f1f5f9; }
+    .rv-block.rv-annotated { border-left-color: var(--accent); background: var(--accent-light); }
+    .rv-block.rv-active { border-left-color: var(--primary); background: var(--primary-light); }
+
+    /* Slot-aware mode: 保留原始布局, 仅原地标记叶子 slot 可批注
+       slot ID 不显示给用户，仅作内部寻址（回传 markdown 时附带） */
+    .rv-slot {
+      position: relative;
+      cursor: pointer;
+      transition: outline 0.15s, background-color 0.15s;
+    }
+    .rv-slot:hover {
+      outline: 1.5px dashed var(--accent);
+      outline-offset: 2px;
+      background-color: rgba(255, 170, 50, 0.04);
+    }
+    .rv-slot.rv-annotated {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }
+    .rv-slot.rv-active {
+      outline: 2px solid var(--primary);
+      outline-offset: 2px;
+    }
+    /* 表格行：border-collapse 下 outline 渲染不稳，改用整行底色 */
+    tr.rv-slot:hover { background-color: rgba(255, 170, 50, 0.14); outline: none; }
+    tr.rv-slot.rv-annotated { background-color: rgba(255, 170, 50, 0.26); outline: none; }
+    tr.rv-slot.rv-active { background-color: rgba(124, 58, 237, 0.16); outline: none; }
+
+    /* Block content styles */
+    #rv-content h1, #rv-content h2, #rv-content h3 {
+      color: var(--text); font-size: 18px; margin: 4px 0;
+    }
+    #rv-content h1 { font-size: 22px; }
+    #rv-content h2 { font-size: 19px; }
+    #rv-content p { margin: 4px 0; }
+    #rv-content pre {
+      background: #f1f5f9; padding: 10px 12px; border-radius: 6px;
+      overflow-x: auto; font-family: var(--mono); font-size: 14px; margin: 6px 0;
+    }
+    #rv-content code { font-family: var(--mono); font-size: 14px; }
+    #rv-content ul, #rv-content ol { padding-left: 20px; }
+    .rv-block > li { list-style: disc; margin-left: 8px; }
+    /* Excel/表格预览（只作用于 .rv-block 内的表格；docx 页面用自己的排版，见 .rv-docx-*）*/
+    .rv-sheet-title { font-size: 15px; font-weight: 600; margin: 4px 0; color: var(--text); }
+    .rv-block table { border-collapse: collapse; width: 100%; font-size: 13px; }
+    .rv-block table td, .rv-block table th {
+      border: 1px solid var(--border); padding: 4px 8px;
+    }
+    /* 单元格截断只给电子表格用——Word 的表格是版面容器，截断会把正文切没 */
+    .rv-block table.rv-sheet-table td, .rv-block table.rv-sheet-table th {
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 320px;
+    }
+    .rv-block table.rv-sheet-table tr:nth-child(even) td { background: var(--accent-light, #f8fafc); }
+    .rv-block { overflow-x: auto; }
+
+    /* ─── Word 版式预览（docx-preview）───
+       目标：和 Word 打开的样子对齐——真页面尺寸/页边距/字体/字号/行距/缩进/表格。
+       手机上整页等比缩到屏宽，双指可放大。 */
+    .rv-docx-viewport { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    .rv-docx-scaler { position: relative; }
+    .rv-docx-host { transform-origin: top left; }
+    .rv-docx-host .docx-wrapper { background: transparent; padding: 0; display: block; }
+    .rv-docx-host .docx-wrapper > section.docx {
+      background: #fff; margin: 0 auto 14px; box-shadow: 0 1px 4px rgba(0,0,0,0.12);
+      border: 1px solid var(--border); border-radius: 2px;
+    }
+    /* Word 里的表格是版面容器，绝不能截断/强制满宽 */
+    .rv-docx-host table { border-collapse: collapse; }
+    .rv-docx-host td, .rv-docx-host th { white-space: normal; overflow: visible; max-width: none; }
+    /* 常见中文字体名 → 各平台可用字体（iOS/macOS 有 Songti/Heiti SC，安卓/桌面走 Noto）*/
+    @font-face { font-family: "宋体"; src: local("SimSun"), local("Songti SC"), local("STSong"), local("Noto Serif CJK SC"), local("Source Han Serif SC"); }
+    @font-face { font-family: "SimSun"; src: local("SimSun"), local("Songti SC"), local("STSong"), local("Noto Serif CJK SC"), local("Source Han Serif SC"); }
+    @font-face { font-family: "黑体"; src: local("SimHei"), local("Heiti SC"), local("PingFang SC"), local("Noto Sans CJK SC"); }
+    @font-face { font-family: "SimHei"; src: local("SimHei"), local("Heiti SC"), local("PingFang SC"), local("Noto Sans CJK SC"); }
+    @font-face { font-family: "仿宋"; src: local("FangSong"), local("STFangsong"), local("Songti SC"), local("Noto Serif CJK SC"); }
+    @font-face { font-family: "楷体"; src: local("KaiTi"), local("Kaiti SC"), local("STKaiti"), local("Noto Serif CJK SC"); }
+    @font-face { font-family: "微软雅黑"; src: local("Microsoft YaHei"), local("PingFang SC"), local("Noto Sans CJK SC"); }
+    /* 已批注的选中片段（Word 式：批注挂在具体一句话上，不是整段）*/
+    .rv-mark {
+      background: rgba(124, 58, 237, 0.16);
+      border-bottom: 2px solid var(--accent);
+      border-radius: 2px;
+    }
+    ::selection { background: rgba(37, 99, 235, 0.25); }
+
+    /* 缩放开关胶囊 */
+    #rv-docx-zoom {
+      position: fixed; right: 12px; bottom: calc(84px + var(--safe-bottom)); z-index: 40;
+      padding: 6px 12px; border: 1px solid var(--border); border-radius: 999px;
+      background: rgba(255,255,255,0.94); color: var(--text-sec); font-size: 12px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1); cursor: pointer;
+    }
+
+    /* PDF page + per-block overlay (V1 visual-review 同思路) */
+    .rv-pdf-page {
+      position: relative; margin: 0 auto 14px; background: #fff;
+      border: 1px solid var(--border); border-radius: 6px; overflow: hidden;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+    }
+    .rv-pdf-page canvas { display: block; width: 100%; height: auto; }
+    .rv-pdf-overlay {
+      position: absolute; inset: 0; pointer-events: none;
+    }
+    .rv-pdf-block {
+      position: absolute;
+      padding: 0; margin: 0; border-left: none; border-radius: 3px;
+      background: transparent; pointer-events: auto;
+      outline: 1px dashed transparent; transition: outline-color 0.12s, background-color 0.12s;
+    }
+    .rv-pdf-block:hover { outline-color: var(--accent); background: rgba(255,170,50,0.08); }
+    .rv-pdf-block.rv-annotated { outline: 2px solid var(--accent); background: rgba(255,170,50,0.12); }
+    .rv-pdf-block.rv-active { outline: 2px solid var(--primary); background: rgba(124,58,237,0.12); }
+    .rv-pdf-label {
+      position: absolute; top: 4px; left: 8px; font-size: 11px;
+      color: var(--text-muted); background: rgba(255,255,255,0.85); padding: 1px 6px;
+      border-radius: 3px; pointer-events: none;
+    }
+
+    #rv-content blockquote {
+      border-left: 3px solid var(--border); padding-left: 12px;
+      color: var(--text-muted); font-style: italic;
+    }
+    #rv-content img { max-width: 100%; border-radius: var(--radius-sm); }
+    #rv-content table { border-collapse: collapse; width: 100%; margin: 6px 0; font-size: 14px; overflow-x: auto; display: block; }
+    #rv-content th, #rv-content td { border: 1px solid var(--border); padding: 6px 10px; text-align: left; }
+    #rv-content th { background: #f1f5f9; font-weight: 600; }
+    #rv-content tr:nth-child(even) { background: #fafbfc; }
+
+    /* Annotation bar (bottom sheet) */
+    #rv-ann-bar {
+      position: fixed; bottom: 0; left: 0; right: 0; z-index: 100;
+      background: var(--card); border-top: 2px solid var(--accent);
+      padding: 12px; padding-bottom: calc(12px + var(--safe-bottom));
+      box-shadow: 0 -4px 20px rgba(0,0,0,.15);
+    }
+    .rv-quote {
+      background: var(--accent-light); border-left: 3px solid var(--accent);
+      padding: 6px 10px; margin-bottom: 10px;
+      font-size: 13px; color: var(--text-sec);
+      max-height: 60px; overflow: hidden; border-radius: 0 4px 4px 0;
+    }
+    .rv-ann-row { display: flex; gap: 8px; }
+    #rv-ann-input {
+      flex: 1; border: 1px solid var(--border); border-radius: var(--radius-sm);
+      padding: 10px 12px; font-size: 14px; font-family: var(--font);
+      outline: none; resize: none; min-height: 40px; max-height: 80px;
+    }
+    #rv-ann-input:focus { border-color: var(--accent); }
+    .rv-ann-actions { display: flex; gap: 8px; margin-top: 8px; justify-content: flex-end; }
+    .rv-btn {
+      border: none; border-radius: var(--radius-sm); padding: 8px 16px;
+      font-size: 14px; cursor: pointer; transition: all 0.15s;
+    }
+    .rv-btn-pri { background: var(--accent); color: #fff; }
+    .rv-btn-pri:active { transform: scale(0.95); }
+    .rv-btn-sec { background: #f3f4f6; color: var(--text-sec); }
+
+    /* Floating toolbar */
+    #rv-toolbar {
+      position: fixed; bottom: calc(16px + var(--safe-bottom)); right: 16px; z-index: 90;
+      display: flex; flex-direction: column; gap: 8px; align-items: stretch;
+    }
+    #rv-toolbar button {
+      background: var(--accent); color: #fff; border: none; border-radius: 24px;
+      padding: 10px 18px; font-size: 14px; cursor: pointer;
+      box-shadow: 0 2px 12px rgba(0,0,0,.25);
+      display: flex; align-items: center; justify-content: center; gap: 6px;
+      min-width: 110px;
+    }
+    #rv-toolbar button:active { transform: scale(0.95); }
+    .rv-badge {
+      background: #fff; color: var(--accent); border-radius: 50%;
+      min-width: 20px; height: 20px; font-size: 11px; font-weight: 700;
+      display: inline-flex; align-items: center; justify-content: center;
+    }
+
+    /* Annotation list popup */
+    #rv-ann-list {
+      position: fixed; bottom: 80px; right: 16px; z-index: 95;
+      background: var(--card); border-radius: var(--radius);
+      box-shadow: 0 4px 20px rgba(0,0,0,.2);
+      max-width: 320px; max-height: 50vh; overflow-y: auto; padding: 12px;
+    }
+    .rv-list-item { border-bottom: 1px solid #eee; padding: 8px 0; font-size: 13px; }
+    .rv-list-item:last-child { border-bottom: none; }
+    .rv-list-quote { color: var(--accent); font-style: italic; font-size: 12px; }
+    .rv-list-comment { color: var(--text); margin-top: 3px; }
+    .rv-list-del { color: #ccc; cursor: pointer; float: right; font-size: 12px; }
+    .rv-list-del:hover { color: var(--danger); }
+
+    /* Toast */
+    #rv-toast {
+      position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%);
+      background: rgba(0,0,0,.8); color: #fff; padding: 14px 24px;
+      border-radius: var(--radius); font-size: 15px; z-index: 200;
+    }
+
+    /* Loading */
+    .rv-loading { display: flex; align-items: center; justify-content: center; height: 60vh; color: var(--text-muted); }
+
+    pre code.hljs { display: block; overflow-x: auto; padding: 1em; background: #f6f8fa; color: #24292e; }
+    ::-webkit-scrollbar { width: 4px; }
+    ::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 2px; }
+    /* === 交互/批注 模式开关（只对作者手写 HTML 显示，其他格式恒为批注）=== */
+    #rv-mode-toggle {
+      position: fixed; top: 10px; right: 12px; z-index: 200;
+      padding: 6px 14px; border: none; border-radius: 999px;
+      background: rgba(91,91,214,.85); color: #fff; font-size: 13px; font-weight: 600;
+      cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,.15);
+    }
+    #rv-mode-toggle:active { transform: scale(0.96); }
+    /* 交互模式 = 作者脚本自由 + 干净全屏：隐藏批注 UI + review 头条 + deck 自带标签 */
+    body.interact-mode #rv-toolbar,
+    body.interact-mode #rv-ann-bar,
+    body.interact-mode #rv-ann-list,
+    body.interact-mode .rv-header,
+    body.interact-mode .tag { display: none !important; }
+    body.interact-mode #rv-content { padding-top: 0; }
+    body.interact-mode .rv-slot { cursor: default; }
+    body.interact-mode .rv-slot:hover { outline: none; background: transparent; }
+  </style>
+</head>
+<body>
+  <header class="rv-header">
+    <span id="rv-name" class="rv-header-name">加载中...</span>
+    <span id="rv-ext" class="rv-header-badge"></span>
+  </header>
+  <button id="rv-mode-toggle" style="display:none" title="批注模式=点哪批哪(作者脚本的点击被拦截)；交互模式=页面按钮/翻页正常工作,不批注">🖱 交互模式</button>
+  <div id="rv-content"><div class="rv-loading">加载中...</div></div>
+
+  <div id="rv-ann-bar" style="display:none">
+    <div id="rv-ann-quote" class="rv-quote"></div>
+    <div class="rv-ann-row">
+      <textarea id="rv-ann-input" placeholder="写批注..." rows="2"></textarea>
+    </div>
+    <div class="rv-ann-actions">
+      <button id="rv-ann-cancel" class="rv-btn rv-btn-sec">取消</button>
+      <button id="rv-ann-add" class="rv-btn rv-btn-pri">添加批注</button>
+    </div>
+  </div>
+
+  <div id="rv-toolbar">
+    <button id="rv-btn-list" style="display:none">批注 <span class="rv-badge" id="rv-ann-count">0</span></button>
+    <button id="rv-btn-submit">提交反馈</button>
+  </div>
+
+  <div id="rv-ann-list" style="display:none"></div>
+  <div id="rv-toast" style="display:none"></div>
+
+  <script src="lib/marked.min.js"></script>
+  <script src="lib/highlight.min.js"></script>
+  <!-- 并行预热：HTML 解析期就把 pdf.js 和 PDF 二进制拉下来，省 1 个 RTT
+       worker.min.js 1.1MB 留给 pdf.js 按需触发，避免非 PDF 文件白下 -->
+  <link rel="preload" as="script" href="/vendor/pdf.min.js">
+  <script defer src="/vendor/pdf.min.js"></script>
+  <!-- mammoth.js 按需触发（.docx 才用），不预加载省 628KB -->
+
+  <script>
+    (function() {
+      var t = new URLSearchParams(location.search).get('token') || new URLSearchParams(location.search).get('id');
+      if (!t) return;
+      var l = document.createElement('link');
+      l.rel = 'preload'; l.as = 'fetch'; l.crossOrigin = 'anonymous';
+      l.href = '/api/review/' + t;
+      document.head.appendChild(l);
+    })();
+  </script>
+  <script defer src="lib/katex.min.js"></script>
+  <script defer id="lib-katex-auto" src="lib/auto-render.min.js"></script>
+  <script defer id="lib-mermaid" src="lib/mermaid.min.js" onload="mermaid.initialize({startOnLoad:false,theme:'default',securityLevel:'loose'})"></script>
+  <script>
+    const _params = new URLSearchParams(location.search);
+    const token = _params.get('token') || _params.get('id');
+    let fileInfo = null, annotations = [], activeBlock = null;
+
+    if (!token) { document.getElementById('rv-name').textContent = '无效链接'; }
+
+    // defer 库（katex/mermaid）可能晚于内容 fetch 才执行完 → md 渲染前必须等，
+    // 否则 renderMathInElement 未定义被静默跳过，公式露成源码（缓存热/冷决定时灵时不灵）
+    function waitLib(id, ready) {
+      if (ready() || document.readyState === 'complete') return Promise.resolve();
+      var el = document.getElementById(id);
+      return new Promise(function(res) {
+        el.addEventListener('load', res); el.addEventListener('error', res);
+        document.addEventListener('DOMContentLoaded', res);   // 兜底：defer 全执行完必在此前
+        window.addEventListener('load', res);                 // 兜底：DCL 已过但 load 未到
+      });
+    }
+
+    // ─── Math protection (prevent marked from mangling LaTeX) ───
+    function protectMath(text) {
+      var ph = [];
+      text = text.replace(/\$\$([\s\S]*?)\$\$/g, function(m) { ph.push(m); return '\x00MATH' + (ph.length - 1) + '\x00'; });
+      text = text.replace(/\$([^\$\n]+?)\$/g, function(m) { ph.push(m); return '\x00MATH' + (ph.length - 1) + '\x00'; });
+      return { text: text, ph: ph };
+    }
+    function restoreMath(html, ph) {
+      return html.replace(/\x00MATH(\d+)\x00/g, function(_, i) { return ph[parseInt(i)]; });
+    }
+
+    // ─── Vendor 懒加载 ───
+    function loadVendor(src) {
+      return new Promise(function(resolve, reject) {
+        var s = document.createElement('script');
+        s.src = src; s.onload = resolve; s.onerror = function() { reject(new Error('加载失败: ' + src)); };
+        document.head.appendChild(s);
+      });
+    }
+
+    // ─── Word 版式渲染（docx-preview）───
+    // 真页面（A4/自定义纸张）+ 页边距 + 原字体字号行距缩进 + 表格边框，逐页白纸呈现。
+    // 手机窄屏整页等比缩放到屏宽，点右下角胶囊可切原尺寸（横向滚动）。
+    async function renderDocxPages(buf, container) {
+      container.innerHTML = '';
+      var viewport = document.createElement('div');
+      viewport.className = 'rv-docx-viewport';
+      var scaler = document.createElement('div');
+      scaler.className = 'rv-docx-scaler';
+      var host = document.createElement('div');
+      host.className = 'rv-docx-host';
+      scaler.appendChild(host);
+      viewport.appendChild(scaler);
+      container.appendChild(viewport);
+
+      await window.docx.renderAsync(buf, host, null, {
+        className: 'docx',
+        inWrapper: true,
+        breakPages: true,          // 按 Word 的分页符分页，逐页白纸
+        renderHeaders: true,
+        renderFooters: true,
+        renderFootnotes: true,
+        renderEndnotes: true,
+        ignoreWidth: false,        // 保留纸张宽度 —— 这是"和 Word 对齐"的关键
+        ignoreHeight: false,
+        ignoreFonts: false,
+        experimental: true,        // 制表位/行内框等实验特性，版式更接近
+        useBase64URL: true
+      });
+
+      markDocxSlots(host);
+
+      var fitMode = true;
+      function apply() {
+        var page = host.querySelector('section.docx') || host.firstElementChild;
+        if (!page) return;
+        host.style.transform = 'none';           // 先复位再量，否则量到的是缩放后的尺寸
+        var pw = page.offsetWidth;
+        // 未缩放时纸张比屏幕宽，会把外层撑开 —— 所以以视口宽为准，不信任 container.clientWidth
+        var avail = Math.max(240, Math.min(container.clientWidth, document.documentElement.clientWidth - 24));
+        var k = fitMode ? Math.min(1, avail / pw) : 1;
+        host.style.transform = k < 1 ? 'scale(' + k + ')' : 'none';
+        scaler.style.width = (pw * k) + 'px';
+        scaler.style.height = (host.offsetHeight * k) + 'px';
+        scaler.style.margin = '0 auto';
+      }
+      apply();
+      requestAnimationFrame(apply);                                  // 布局稳定后再量一次
+      if (document.fonts && document.fonts.ready) document.fonts.ready.then(apply);  // 字体换回流后再量
+      window.addEventListener('resize', apply);
+
+      // 划词批注不显眼，进来提示一次
+      setTimeout(function() { showToast('划选一句话可对这句批注，点整段则批注整段'); }, 600);
+
+      // 缩放胶囊：窄屏才有意义（宽屏 fit 结果就是 100%）
+      var old = document.getElementById('rv-docx-zoom');
+      if (old) old.remove();
+      var btn = document.createElement('button');
+      btn.id = 'rv-docx-zoom';
+      btn.textContent = '原尺寸';
+      btn.addEventListener('click', function() {
+        fitMode = !fitMode;
+        btn.textContent = fitMode ? '原尺寸' : '适合宽度';
+        apply();
+      });
+      document.body.appendChild(btn);
+    }
+
+    // 逐段落原地标记为可批注 slot（保留 Word 版式，不拆块重排）
+    // 中式公文/申报书模板常把整篇正文塞在一个大表格里 —— 遇到"版面表格"要钻进去按段落标，
+    // 否则整篇只有一个 slot，批注等于没有。小表格（数据表）保持整表一个 slot。
+    var LAYOUT_TABLE_MIN_CHARS = 400;
+    function markDocxSlots(host) {
+      var idx = 0;
+      // 段号按全篇连续编（跨 section 不重置）——docx-preview 的渲染顺序即 document.xml
+      // 里 w:p 的顺序，所以 para.N = Word 文档正文第 N 段，CC 可用 python-docx 直接定位。
+      // 页眉页脚不计数，否则段号会和 Word 里对不上。
+      var para = 0;
+      host.querySelectorAll('section.docx').forEach(function(sec) {
+        function mark(el) {
+          el.classList.add('rv-slot');
+          el.dataset.idx = String(idx++);
+          el.dataset.slot = 'para.' + (++para);
+        }
+        function walk(parent) {
+          Array.prototype.forEach.call(parent.children, function(el) {
+            if (!el.textContent || !el.textContent.trim()) return;
+            if (el.classList.contains('docx-header') || el.classList.contains('docx-footer')) return;
+            if (el.tagName === 'TABLE') {
+              if (el.textContent.trim().length > LAYOUT_TABLE_MIN_CHARS) walk(el);  // 版面表格：钻进去
+              else mark(el);                                                        // 数据表格：整表一块
+              return;
+            }
+            // 结构判断容器 vs 叶子：docx-preview 会包 article（分栏）/ tbody / td 等中间层
+            if (el.querySelector('p, table')) walk(el);
+            else mark(el);
+          });
+        }
+        walk(sec);
+      });
+    }
+
+    // ─── 手写 HTML 自动切板块 ───
+    // 作者写的单文件 HTML 几乎总是整篇裹在一个 <div class="wrap"> 里。按 body 顶层子元素
+    // 分块 → 全篇只有 1 块 → 只能对整体批注。这里保留原布局，递归下钻到"叶子"原地标 slot，
+    // 每个卡片 / 表格行 / 列表项都能单独批注。锚点用 CSS 路径，CC 可直接定位到源码那一段。
+    var HTML_LAYOUT_TABLE_MIN_CHARS = 400;
+    var HTML_BLOCK_TAGS = 'div,section,article,main,aside,header,footer,nav,ul,ol,li,dl,dt,dd,'
+                        + 'p,h1,h2,h3,h4,h5,h6,table,thead,tbody,tr,td,th,figure,blockquote,pre,details,form,fieldset';
+
+    // 相对 #rv-content 的紧凑 CSS 路径：tag.首个class:nth-of-type(n)
+    function htmlSlotPath(el, root) {
+      var parts = [];
+      for (var n = el; n && n !== root; n = n.parentElement) {
+        var seg = n.tagName.toLowerCase();
+        for (var c = 0; c < n.classList.length; c++) {
+          if (n.classList[c].indexOf('rv-') === 0) continue;   // 审阅页自己加的类不进路径
+          seg += '.' + n.classList[c]; break;
+        }
+        var same = 0, pos = 0;
+        var sibs = n.parentElement ? n.parentElement.children : [];
+        for (var i = 0; i < sibs.length; i++) {
+          if (sibs[i].tagName !== n.tagName) continue;
+          same++;
+          if (sibs[i] === n) pos = same;
+        }
+        if (same > 1) seg += ':nth-of-type(' + pos + ')';
+        parts.unshift(seg);
+      }
+      return parts.join('>');
+    }
+
+    function markHtmlSlots(root) {
+      var idx = 0;
+      function mark(el) {
+        if (el.classList.contains('rv-slot')) return;
+        el.dataset.slot = htmlSlotPath(el, root);   // 先算路径再打类，否则 rv-slot 会混进路径
+        el.classList.add('rv-slot');
+        el.dataset.idx = String(idx++);
+      }
+      function walk(parent) {
+        Array.prototype.forEach.call(parent.children, function(el) {
+          if (!el.textContent || !el.textContent.trim()) return;      // 纯装饰元素（箭头/分隔线）跳过
+          if (el.tagName === 'SCRIPT' || el.tagName === 'STYLE') return;
+          if (el.tagName === 'TABLE') {
+            // 版面表格（中式公文常把正文塞表格里）钻进去；数据表整表一块
+            if (el.textContent.trim().length > HTML_LAYOUT_TABLE_MIN_CHARS) walk(el);
+            else mark(el);
+            return;
+          }
+          if (el.querySelector(HTML_BLOCK_TAGS)) walk(el);            // 还有块级后代 → 是容器，继续下钻
+          else mark(el);                                              // 叶子 → 可批注
+        });
+      }
+      walk(root);
+      return idx;
+    }
+
+    // ─── Init（v2 token-based） ───
+    (async () => {
+      if (!token) return;
+      try {
+        const metaR = await fetch('/api/review/' + token + '/meta');
+        if (!metaR.ok) throw new Error('HTTP ' + metaR.status + ' (meta)');
+        const meta = await metaR.json();
+        if (meta.error) throw new Error(meta.error);
+
+        const IMG_EXTS = ['.jpg','.jpeg','.png','.gif','.webp','.svg','.bmp','.avif'];
+        const ext = (meta.ext || '').toLowerCase();
+        const VIDEO_EXTS = ['.mp4','.m4v','.webm','.ogv','.mov','.mkv','.avi'];
+        const AUDIO_EXTS = ['.mp3','.m4a','.aac','.wav','.ogg','.oga','.opus','.flac'];
+        const isImage = IMG_EXTS.includes(ext);
+        const isVideo = VIDEO_EXTS.includes(ext);
+        const isAudio = AUDIO_EXTS.includes(ext);
+        const isPdf = ext === '.pdf';
+
+        fileInfo = { name: meta.name, ext: meta.ext, content: '', terminalId: meta.from_actor, isImage };
+        document.getElementById('rv-name').textContent = fileInfo.name;
+        document.getElementById('rv-ext').textContent = fileInfo.ext;
+        document.title = '审阅 - ' + fileInfo.name;
+
+        if (isImage) {
+          const c = document.getElementById('rv-content');
+          c.innerHTML = '';
+          const img = document.createElement('img');
+          img.src = '/api/review/' + token;
+          img.alt = fileInfo.name;
+          img.style.cssText = 'max-width:100%;display:block;margin:8px auto;border-radius:8px;';
+          c.appendChild(img);
+          return;
+        }
+
+        if (isVideo || isAudio) {
+          const c = document.getElementById('rv-content');
+          c.innerHTML = '';
+          const wrap = document.createElement('div');
+          wrap.style.cssText = 'margin:8px auto;max-width:900px;';
+          const el = document.createElement(isVideo ? 'video' : 'audio');
+          el.src = '/api/review/' + token;
+          el.controls = true;
+          el.preload = 'metadata';
+          el.setAttribute('playsinline', '');       // iOS 内联播放，不强制全屏
+          el.style.cssText = isVideo
+            ? 'width:100%;max-height:78vh;display:block;background:#000;border-radius:8px;'
+            : 'width:100%;display:block;';
+          const tip = document.createElement('div');
+          tip.style.cssText = 'font-size:12px;color:var(--text-muted);margin-top:8px;text-align:center;';
+          tip.innerHTML = '<a href="/api/review/' + token + '" download="' + fileInfo.name + '" style="color:var(--primary);">⬇ 下载原文件</a>';
+          // 浏览器不认这个编码（.mkv/.avi/部分 .mov 常见）→ 明说，不留白屏
+          el.addEventListener('error', function() {
+            tip.innerHTML = '⚠️ 浏览器无法解码「' + fileInfo.ext + '」（编码不受支持），'
+              + '<a href="/api/review/' + token + '" download="' + fileInfo.name + '" style="color:var(--primary);">下载后本地播放</a>';
+          });
+          // 批注：挂在当前播放时刻上，CC 收到的是「03:12 这里……」
+          const btn = document.createElement('button');
+          btn.className = 'rv-btn rv-btn-sec';
+          const fmt = (t) => String(Math.floor(t / 60)).padStart(2, '0') + ':' + String(Math.floor(t % 60)).padStart(2, '0');
+          btn.textContent = '在 00:00 处批注';
+          el.addEventListener('timeupdate', function() { btn.textContent = '在 ' + fmt(el.currentTime || 0) + ' 处批注'; });
+          btn.style.cssText = 'margin:10px auto 0;display:block;';
+          const anchor = document.createElement('div');
+          anchor.className = 'rv-block';
+          anchor.dataset.idx = '0';
+          anchor.style.cssText = 'display:none;';
+          btn.addEventListener('click', function(e) {
+            e.stopPropagation();
+            anchor.dataset.quote = fmt(el.currentTime || 0) + ' @ ' + fileInfo.name;
+            showAnnBar(anchor);
+          });
+          wrap.appendChild(el); wrap.appendChild(btn); wrap.appendChild(tip); wrap.appendChild(anchor);
+          c.appendChild(wrap);
+          return;
+        }
+
+        if (isPdf) {
+          const c = document.getElementById('rv-content');
+          c.innerHTML = '<div class="rv-loading">加载 PDF…</div>';
+          try {
+            // pdf.min.js 已在 <head> defer 预加载；这里只 fallback 兜底（head 失效场景）
+            if (!window.pdfjsLib) {
+              await new Promise((resolve, reject) => {
+                const s = document.createElement('script');
+                s.src = '/vendor/pdf.min.js'; s.onload = resolve; s.onerror = reject;
+                document.head.appendChild(s);
+              });
+            }
+            window.pdfjsLib.GlobalWorkerOptions.workerSrc = '/vendor/pdf.worker.min.js';
+            const pdf = await window.pdfjsLib.getDocument('/api/review/' + token).promise;
+            c.innerHTML = '';
+            const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
+            let globalIdx = 0;
+            for (let i = 1; i <= pdf.numPages; i++) {
+              const page = await pdf.getPage(i);
+              const containerW = Math.max(280, c.clientWidth - 4);
+              const vp1 = page.getViewport({ scale: 1 });
+              const cssScale = containerW / vp1.width;
+              const viewport = page.getViewport({ scale: cssScale });
+
+              const wrap = document.createElement('div');
+              wrap.className = 'rv-pdf-page';
+              wrap.style.width = viewport.width + 'px';
+              wrap.style.height = viewport.height + 'px';
+
+              const canvas = document.createElement('canvas');
+              canvas.width = viewport.width * dpr;
+              canvas.height = viewport.height * dpr;
+              canvas.style.width = viewport.width + 'px';
+              canvas.style.height = viewport.height + 'px';
+              const ctx = canvas.getContext('2d');
+              ctx.scale(dpr, dpr);
+              wrap.appendChild(canvas);
+
+              const label = document.createElement('div');
+              label.className = 'rv-pdf-label';
+              label.textContent = 'P' + i + ' / ' + pdf.numPages;
+              wrap.appendChild(label);
+
+              const overlay = document.createElement('div');
+              overlay.className = 'rv-pdf-overlay';
+              wrap.appendChild(overlay);
+
+              c.appendChild(wrap);
+
+              await page.render({ canvasContext: ctx, viewport }).promise;
+
+              const textContent = await page.getTextContent();
+              const blocks = mergePdfTextItems(textContent.items, vp1, cssScale);
+
+              blocks.forEach((b, bi) => {
+                const div = document.createElement('div');
+                div.className = 'rv-block rv-pdf-block';
+                div.dataset.idx = String(globalIdx++);
+                div.dataset.slot = 'page.' + i + '.b' + (bi + 1);
+                div.dataset.quote = b.text;
+                div.style.left = b.left + 'px';
+                div.style.top = b.top + 'px';
+                div.style.width = b.width + 'px';
+                div.style.height = b.height + 'px';
+                overlay.appendChild(div);
+              });
+            }
+          } catch (e) {
+            c.innerHTML = '<div class="rv-loading">PDF 渲染失败<br><small style="color:#999">' + esc(e.message || '') + '</small><br><a href="/api/review/' + token + '" download>点击下载</a></div>';
+          }
+          return;
+        }
+
+        if (ext === '.xlsx' || ext === '.xls' || ext === '.xlsm') {
+          const c = document.getElementById('rv-content');
+          c.innerHTML = '<div class="rv-loading">加载表格…</div>';
+          try {
+            if (!window.XLSX) {
+              await new Promise((resolve, reject) => {
+                const s = document.createElement('script');
+                s.src = '/vendor/xlsx.full.min.js'; s.onload = resolve; s.onerror = reject;
+                document.head.appendChild(s);
+              });
+            }
+            const buf = await (await fetch('/api/review/' + token)).arrayBuffer();
+            const wb = window.XLSX.read(buf, { type: 'array' });
+            let combined = '';
+            wb.SheetNames.forEach(function(name) {
+              const tableHtml = window.XLSX.utils.sheet_to_html(wb.Sheets[name]);
+              const m = tableHtml.match(/<table[\s\S]*<\/table>/i);
+              // 打上 rv-sheet-table：单元格截断样式只对电子表格生效（Word 表格不能截）
+              // data-sheet 让逐行 slot 能报出「哪张表的第几行」，CC 拿到就能定位单元格
+              const tbl = m ? m[0].replace(/<table/i, '<table class="rv-sheet-table" data-sheet="' + esc(name) + '"') : '';
+              combined += '<h3 class="rv-sheet-title">' + esc(name) + '</h3>' + tbl;
+            });
+            fileInfo.content = combined || '<p>（空表格）</p>';
+            fileInfo.ext = '.html';
+            fileInfo.converted = true;   // 转出来的 HTML 片段，不走"作者手写整页"那套切块
+            renderBlocks(fileInfo);
+          } catch (e) {
+            c.innerHTML = '<div class="rv-loading">表格渲染失败<br><small style="color:#999">' + esc(e.message || '') + '</small><br><a href="/api/review/' + token + '" download>点击下载</a></div>';
+          }
+          return;
+        }
+
+        if (ext === '.docx') {
+          const c = document.getElementById('rv-content');
+          c.innerHTML = '<div class="rv-loading">加载 Word…</div>';
+          const buf = await (await fetch('/api/review/' + token)).arrayBuffer();
+          try {
+            // 首选 docx-preview：直接解 OOXML 排版（页面尺寸/页边距/字体/字号/行距/缩进/表格），
+            // 和 Word 打开的版式对齐；mammoth 只做语义 HTML，版式全丢，仅作兜底。
+            if (!window.JSZip) await loadVendor('/vendor/jszip.min.js');   // docx-preview 的硬依赖
+            if (!window.docx) await loadVendor('/vendor/docx-preview.min.js');
+            await renderDocxPages(buf, c);
+          } catch (e) {
+            console.warn('docx-preview 失败，回退 mammoth：', e);
+            try {
+              if (!window.mammoth) await loadVendor('/vendor/mammoth.browser.min.js');
+              const result = await window.mammoth.convertToHtml({ arrayBuffer: buf });
+              fileInfo.content = result.value;
+              fileInfo.ext = '.html';
+              fileInfo.converted = true;
+              renderBlocks(fileInfo);
+            } catch (e2) {
+              c.innerHTML = '<div class="rv-loading">Word 渲染失败<br><small style="color:#999">' + esc(e2.message || '') + '</small><br><a href="/api/review/' + token + '" download>点击下载</a></div>';
+            }
+          }
+          return;
+        }
+
+        if (ext === '.doc') {
+          document.getElementById('rv-content').innerHTML =
+            '<div class="rv-loading">旧版 .doc 不支持在线预览，请<a href="/api/review/' + token + '" download>下载查看</a>或转存为 .docx 再上传</div>';
+          return;
+        }
+
+        const contentR = await fetch('/api/review/' + token);
+        if (!contentR.ok) throw new Error('HTTP ' + contentR.status + ' (content)');
+        fileInfo.content = await contentR.text();
+        if (fileInfo.ext === '.md') {
+          await waitLib('lib-katex-auto', function() { return typeof renderMathInElement !== 'undefined'; });
+          if (/```mermaid/.test(fileInfo.content))
+            await waitLib('lib-mermaid', function() { return typeof mermaid !== 'undefined'; });
+        }
+        renderBlocks(fileInfo);
+      } catch(e) {
+        document.getElementById('rv-content').innerHTML =
+          '<div class="rv-loading">文件不存在或已过期<br><small style="color:#999">' + esc(e.message || '') + '</small></div>';
+      }
+    })();
+
+    // ─── 交互 / 批注 双模（只用于作者手写 HTML）───
+    // 冲突根源：作者页面的 click 和「点块批注」抢同一次点击。解法是显式分模式——
+    //   批注模式（默认）：capture 阶段吃掉点击，作者 handler 一次都不触发，只弹批注条；
+    //   交互模式：本页完全不插手，按钮/tab/翻页照常，同时藏掉批注 UI = 干净全屏。
+    // 其他格式（md / docx / xlsx / pdf / 代码 / 图片）没有自带运行时，恒为批注模式，不显示开关；
+    // 音视频只经「在 mm:ss 处批注」按钮下批注，播放器点击本就不弹批注条。
+    function showModeToggle() {
+      document.getElementById('rv-mode-toggle').style.display = '';
+    }
+    var _guardInstalled = false;
+    function installAnnotateGuard(root) {
+      if (_guardInstalled) return;
+      _guardInstalled = true;
+      root.addEventListener('click', function(e) {
+        if (document.body.classList.contains('interact-mode')) return;   // 交互模式：放行给作者脚本
+        if (e.target.closest('a[href]')) return;                          // 链接照常跳
+        e.stopPropagation();                                              // 作者 handler 收不到这一下
+        e.preventDefault();
+        onContentClick(e);                                                // 改由我们弹批注条
+      }, true);
+    }
+    // 作者脚本按序执行（外链等 onload，保持源码顺序），跑完补发 DOMContentLoaded / load，
+    // 因为此刻文档早已 ready，作者写的 addEventListener('DOMContentLoaded') 否则永不触发。
+    async function runAuthorScripts(list) {
+      for (var i = 0; i < list.length; i++) {
+        var src = list[i];
+        var el = document.createElement('script');
+        for (var k = 0; k < src.attributes.length; k++) {
+          el.setAttribute(src.attributes[k].name, src.attributes[k].value);
+        }
+        try {
+          if (src.src) {
+            await new Promise(function(res) { el.onload = el.onerror = res; document.body.appendChild(el); });
+          } else {
+            el.textContent = src.textContent;
+            document.body.appendChild(el);
+          }
+        } catch (e) { console.warn('author script:', e); }
+      }
+      try {
+        document.dispatchEvent(new Event('DOMContentLoaded'));
+        window.dispatchEvent(new Event('load'));
+      } catch (e) {}
+    }
+
+    // ─── Render ───
+    function renderBlocks(info) {
+      var html;
+      var authorScripts = [];
+      if (info.ext === '.md') {
+        if (typeof marked !== 'undefined') {
+          marked.setOptions({ gfm: true, breaks: true });
+          if (typeof hljs !== 'undefined') {
+            marked.setOptions({
+              highlight: function(code, lang) {
+                if (lang === 'mermaid') return esc(code);
+                return hljs.getLanguage(lang) ? hljs.highlight(code, { language: lang }).value : hljs.highlightAuto(code).value;
+              }
+            });
+          }
+          var pm = protectMath(info.content);
+          html = marked.parse(pm.text);
+          html = restoreMath(html, pm.ph);
+        } else {
+          html = '<pre>' + esc(info.content) + '</pre>';
+        }
+      } else if (info.ext !== '.html' && info.ext !== '.htm') {
+        // 代码/文本文件：按 10 行一块分块，每块可批注
+        var content = document.getElementById('rv-content');
+        content.innerHTML = '';
+        var lang = info.ext.replace('.', '');
+        var highlighted;
+        if (typeof hljs !== 'undefined' && hljs.getLanguage(lang)) {
+          highlighted = hljs.highlight(info.content, { language: lang }).value;
+        } else if (typeof hljs !== 'undefined') {
+          highlighted = hljs.highlightAuto(info.content).value;
+        } else {
+          highlighted = esc(info.content);
+        }
+        var hLines = highlighted.split('\n');
+        var CHUNK = 10;
+        for (var i = 0; i < hLines.length; i += CHUNK) {
+          var chunk = hLines.slice(i, i + CHUNK).join('\n');
+          var block = document.createElement('div');
+          block.className = 'rv-block';
+          block.dataset.idx = Math.floor(i / CHUNK);
+          var lineLabel = document.createElement('div');
+          lineLabel.style.cssText = 'font-size:11px;color:var(--text-muted);margin-bottom:2px;';
+          lineLabel.textContent = 'L' + (i + 1) + '-' + Math.min(i + CHUNK, hLines.length);
+          block.appendChild(lineLabel);
+          var pre = document.createElement('pre');
+          pre.style.margin = '0';
+          var code = document.createElement('code');
+          code.className = 'hljs';
+          code.innerHTML = chunk;
+          pre.appendChild(code);
+          block.appendChild(pre);
+          content.appendChild(block);
+        }
+        return;
+      } else {
+        // 静态 HTML：提取 body 内容，分块渲染
+        var parser = new DOMParser();
+        var doc = parser.parseFromString(info.content, 'text/html');
+        doc.querySelectorAll('style').forEach(function(s) {
+          var scoped = document.createElement('style');
+          scoped.textContent = s.textContent;
+          document.head.appendChild(scoped);
+        });
+        var body = doc.body;
+        // 作者手写整页 HTML 的脚本先存下来（渲染完再按序执行 → 页面真能点）；
+        // 转换来的 HTML 片段（xlsx/docx）没有脚本，照旧直接剥。
+        authorScripts = Array.prototype.slice.call(doc.querySelectorAll('script'));
+        doc.querySelectorAll('script').forEach(function(s) { s.remove(); });
+        html = body.innerHTML;
+      }
+
+      var temp = document.createElement('div');
+      temp.innerHTML = html;
+      var content = document.getElementById('rv-content');
+      content.innerHTML = '';
+
+      var idx = 0;
+      function addBlock(node, slotId) {
+        var block = document.createElement('div');
+        block.className = 'rv-block';
+        block.dataset.idx = idx++;
+        if (slotId) block.dataset.slot = slotId;
+        block.appendChild(node);
+        content.appendChild(block);
+        return block;
+      }
+
+      // 表格逐行可批注：整表一块的话，一张几百行的 sheet 只能整体批注（= 等于不能批注）。
+      // 行原地标 .rv-slot（不拆出表格，否则 <tr> 脱离 <table> 版式全塌），
+      // closest() 取最内层 → 点行=批注该行，点表格空白=批注整表。
+      var TABLE_ROW_SLOT_MAX = 2000;   // 超大 sheet 不逐行标，避免几万个节点卡死页面
+      function markTableRows(table, tableNo) {
+        if (!table || table.tagName !== 'TABLE') return;
+        var rows = table.querySelectorAll('tr');
+        if (rows.length > TABLE_ROW_SLOT_MAX) return;
+        var sheet = table.dataset.sheet || '';
+        for (var k = 0; k < rows.length; k++) {
+          if (!rows[k].textContent || !rows[k].textContent.trim()) continue;
+          rows[k].dataset.slot = (sheet ? 'sheet[' + sheet + ']/' : 'table.' + tableNo + '/') + 'row.' + (k + 1);
+          rows[k].classList.add('rv-slot');
+          rows[k].dataset.idx = idx++;
+        }
+      }
+
+      // Slot-aware chunking：若作者用 data-slot 标记语义块
+      // 保留原始布局，仅原地给叶子 slot 加可批注标记（不拆走、不重排）
+      var hasSlots = temp.querySelector('[data-slot]') !== null;
+      // 作者手写的整页 HTML（非 xlsx/mammoth 转出来的片段）：布局是它自己的，不能拆走重排
+      var authorHtml = (info.ext === '.html' || info.ext === '.htm') && !info.converted;
+
+      if (hasSlots || authorHtml) {
+        // 把原 body 内容整体放入 content，保留作者的布局
+        content.innerHTML = temp.innerHTML;
+        if (hasSlots) {
+          // 作者自己标了 data-slot：找到叶子 slot（内部不再嵌套 data-slot 的），原地标记
+          var allSlots = content.querySelectorAll('[data-slot]');
+          for (var i = 0; i < allSlots.length; i++) {
+            var el = allSlots[i];
+            if (el.querySelector('[data-slot]')) continue;  // 跳过容器 slot
+            el.classList.add('rv-slot');
+            el.dataset.idx = idx++;
+          }
+        } else {
+          markHtmlSlots(content);   // 没标 slot：自动下钻到叶子，每个卡片/行/条目单独可批注
+        }
+        if (authorHtml) {
+          // 作者手写 HTML 唯一自带运行时 → 只有它需要「交互 / 批注」开关
+          showModeToggle();
+          installAnnotateGuard(content);
+          runAuthorScripts(authorScripts);
+        }
+      } else {
+        var tableNo = 0;
+        for (var i = 0; i < temp.children.length; i++) {
+          var child = temp.children[i];
+          if (child.tagName === 'HR') { content.appendChild(child.cloneNode(true)); continue; }
+          if (child.tagName === 'UL' || child.tagName === 'OL') {
+            var items = child.querySelectorAll(':scope > li');
+            for (var j = 0; j < items.length; j++) addBlock(items[j].cloneNode(true));
+            continue;
+          }
+          if (child.tagName === 'TABLE') {
+            tableNo++;
+            var host = addBlock(child.cloneNode(true));   // 整表仍是一块（点表格空白处 = 对整表批注）
+            markTableRows(host.firstElementChild, tableNo);
+            continue;
+          }
+          addBlock(child.cloneNode(true));
+        }
+      }
+
+      if (info.ext === '.md' && typeof renderMathInElement !== 'undefined') {
+        renderMathInElement(content, {
+          delimiters: [
+            {left: '$$', right: '$$', display: true},
+            {left: '$', right: '$', display: false},
+            {left: '\\(', right: '\\)', display: false},
+            {left: '\\[', right: '\\]', display: true}
+          ],
+          throwOnError: false
+        });
+      }
+
+      if (info.ext === '.md' && typeof mermaid !== 'undefined') {
+        var mblocks = content.querySelectorAll('code.language-mermaid');
+        mblocks.forEach(function(code, i) {
+          var pre = code.parentElement;
+          var host = pre && pre.tagName === 'PRE' ? pre : code;
+          var div = document.createElement('div');
+          div.className = 'mermaid';
+          div.id = 'mmd-' + Date.now() + '-' + i;
+          div.textContent = code.textContent;
+          host.parentElement.replaceChild(div, host);
+        });
+        try { mermaid.run({ querySelector: '.mermaid' }); } catch (e) { console.warn('mermaid:', e); }
+      }
+
+      // ─── Slide Navigation (keyboard + swipe, no buttons) ───
+      (function() {
+        if (authorScripts.length) return;   // 作者自带脚本（含原 fit/翻页）→ 用它自己的，别双份
+        var slides = document.querySelectorAll('.slide');
+        if (slides.length <= 1) return;
+
+        var current = 0, total = slides.length;
+
+        // 固定画布幻灯片（.page>.scaler>.slide，1280×720）：原 fit() 脚本被剥，
+        // 这里按容器宽等比缩放「当前页」，替代之，使任意宽度（含手机）都不溢出。
+        // 只让当前页占位（其余整页 display:none），否则 85 页全堆叠 → 翻页越翻越靠下。
+        function fitCurrent() {
+          var s = slides[current];
+          var host = document.getElementById('rv-content');
+          var cw = (host && host.clientWidth) || window.innerWidth;
+          var k = Math.min(cw / 1280, 1);
+          var sc = s.closest('.scaler') || s;
+          sc.style.transformOrigin = 'top left';
+          sc.style.transform = 'scale(' + k + ')';
+          var pg = s.closest('.page');
+          if (pg) { pg.style.width = (1280 * k) + 'px'; pg.style.height = (720 * k) + 'px'; pg.style.margin = '0 auto'; }
+        }
+
+        function showSlide(idx) {
+          for (var i = 0; i < slides.length; i++) {
+            var pg = slides[i].closest('.page') || slides[i];
+            pg.style.display = i === idx ? 'block' : 'none';  // 整页隐藏，不占位
+            slides[i].style.display = 'flex';
+          }
+          current = idx;
+          fitCurrent();
+          window.scrollTo(0, 0);
+        }
+
+        showSlide(0);
+        window.addEventListener('resize', fitCurrent);
+
+        document.addEventListener('keydown', function(e) {
+          if (e.target.closest('input,textarea,[contenteditable]')) return;
+          if (e.key === 'ArrowRight' || e.key === 'ArrowDown' || e.key === 'PageDown') {
+            e.preventDefault();
+            if (current < total - 1) showSlide(current + 1);
+          } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp' || e.key === 'PageUp') {
+            e.preventDefault();
+            if (current > 0) showSlide(current - 1);
+          }
+        });
+
+        var touchX = 0;
+        document.addEventListener('touchstart', function(e) {
+          touchX = e.changedTouches[0].screenX;
+        }, {passive: true});
+        document.addEventListener('touchend', function(e) {
+          var dx = e.changedTouches[0].screenX - touchX;
+          if (Math.abs(dx) > 50) {
+            if (dx < 0 && current < total - 1) showSlide(current + 1);
+            else if (dx > 0 && current > 0) showSlide(current - 1);
+          }
+        });
+      })();
+    }
+
+    // ─── PDF: 把 textContent 项合并成段落块（移植自 V1，先分栏再合段，避免双栏论文整页合并） ───
+    function mergePdfTextItems(items, origVp, scale) {
+      var mapped = [];
+      for (var i = 0; i < items.length; i++) {
+        var it = items[i];
+        if (!it.str || !it.str.trim()) continue;
+        var tx = it.transform;
+        var fontSize = Math.sqrt(tx[2] * tx[2] + tx[3] * tx[3]);
+        mapped.push({
+          text: it.str,
+          x: tx[4] * scale,
+          y: (origVp.height - tx[5]) * scale - fontSize * scale,
+          w: (it.width || 0) * scale,
+          h: (fontSize || 12) * scale,
+          fontSize: fontSize
+        });
+      }
+      if (!mapped.length) return [];
+      var pageW = origVp.width * scale;
+
+      // 分栏：按 item 起点 x 计左右半页质心；左右各有足量文本且质心相距 >25% 页宽即视为双栏，
+      // splitX = 两质心中点。比"找连续空 bin"鲁棒——脚注/页眉等横跨全页的元素不会破坏检测。
+      function detectColumns(itemsIn) {
+        if (itemsIn.length < 20) return null;
+        var mid = pageW / 2;
+        var leftMass = 0, leftSum = 0, rightMass = 0, rightSum = 0;
+        for (var i = 0; i < itemsIn.length; i++) {
+          var x = itemsIn[i].x;
+          if (x < mid) { leftMass++; leftSum += x; }
+          else { rightMass++; rightSum += x; }
+        }
+        // 左右两侧各至少 15% 文本才认为是双栏（学术论文首页右栏可能略少）
+        if (leftMass < itemsIn.length * 0.15 || rightMass < itemsIn.length * 0.15) return null;
+        var leftCenter = leftSum / leftMass;
+        var rightCenter = rightSum / rightMass;
+        if (rightCenter - leftCenter < pageW * 0.25) return null;
+        // 直接按质心中点切——不再用 straddle 兜底（学术论文首页标题/摘要等宽 item
+        // 会让 straddle 误判，把整页退回单栏，反而把双栏正文合并成大块）
+        return (leftCenter + rightCenter) / 2;
+      }
+
+      var splitX = detectColumns(mapped);
+      if (splitX != null) {
+        var left = mapped.filter(function(it) { return it.x + it.w / 2 < splitX; });
+        var right = mapped.filter(function(it) { return it.x + it.w / 2 >= splitX; });
+        return _mergeOneColumn(left, pageW).concat(_mergeOneColumn(right, pageW));
+      }
+      return _mergeOneColumn(mapped, pageW);
+    }
+
+    function _mergeOneColumn(mapped, pageW) {
+      if (!mapped.length) return [];
+      mapped.sort(function(a, b) { return a.y - b.y || a.x - b.x; });
+
+      // 1) 按 y 分行
+      var rawLines = [[mapped[0]]];
+      for (var i = 1; i < mapped.length; i++) {
+        var item = mapped[i];
+        var last = rawLines[rawLines.length - 1];
+        var lastItem = last[last.length - 1];
+        var threshold = Math.max(lastItem.h, item.h) * 0.5;
+        if (Math.abs(item.y - lastItem.y) < threshold) last.push(item);
+        else rawLines.push([item]);
+      }
+
+      // 2) 行内大 x 间隙 → 拆段（同栏多 segment，少见情况）
+      var lines = [];
+      for (var li = 0; li < rawLines.length; li++) {
+        var line = rawLines[li];
+        if (line.length <= 1) { lines.push(line); continue; }
+        line.sort(function(a, b) { return a.x - b.x; });
+        var seg = [line[0]];
+        for (var j = 1; j < line.length; j++) {
+          var prev = seg[seg.length - 1];
+          var gap = line[j].x - (prev.x + prev.w);
+          if (gap > pageW * 0.08) { lines.push(seg); seg = [line[j]]; }
+          else seg.push(line[j]);
+        }
+        lines.push(seg);
+      }
+
+      // 3) 相邻行合并成段：行距/缩进/字号变化即拆段
+      if (!lines.length) return [];
+      var blocks = [];
+      var group = [lines[0]];
+      for (var i = 1; i < lines.length; i++) {
+        var prev = group[group.length - 1];
+        var prevBottom = Math.max.apply(null, prev.map(function(it) { return it.y + it.h; }));
+        var currTop = Math.min.apply(null, lines[i].map(function(it) { return it.y; }));
+        var lineH = Math.max.apply(null, prev.map(function(it) { return it.h; }));
+        var gap = currTop - prevBottom;
+        var prevLeft = Math.min.apply(null, prev.map(function(it) { return it.x; }));
+        var currLeft = Math.min.apply(null, lines[i].map(function(it) { return it.x; }));
+        var leftShift = Math.abs(currLeft - prevLeft);
+        var fontChanged = Math.abs(prev[0].fontSize - lines[i][0].fontSize) > 1;
+        var split = gap >= lineH * 0.8 || gap < -lineH * 0.3 || leftShift > lineH * 2 || fontChanged;
+        if (split) { blocks.push(buildPdfBlock(group)); group = [lines[i]]; }
+        else group.push(lines[i]);
+      }
+      blocks.push(buildPdfBlock(group));
+      return blocks;
+    }
+
+    function buildPdfBlock(lineGroups) {
+      var all = [];
+      for (var i = 0; i < lineGroups.length; i++) all = all.concat(lineGroups[i]);
+      var left = Math.max(0, Math.min.apply(null, all.map(function(it) { return it.x; })) - 2);
+      var top = Math.max(0, Math.min.apply(null, all.map(function(it) { return it.y; })) - 2);
+      var right = Math.max.apply(null, all.map(function(it) { return it.x + it.w; })) + 2;
+      var bottom = Math.max.apply(null, all.map(function(it) { return it.y + it.h; })) + 2;
+      var text = lineGroups.map(function(line) {
+        return line.sort(function(a, b) { return a.x - b.x; }).map(function(it) { return it.text; }).join('');
+      }).join('\n');
+      return { left: left, top: top, width: right - left, height: bottom - top, text: text };
+    }
+
+    // ─── Annotation ───
+    function showAnnBar(block, selection) {
+      if (activeBlock) activeBlock.classList.remove('rv-active');
+      activeBlock = block;
+      pendingSelection = selection || null;   // 有选区 → 批注挂在这句话上；无 → 挂整段
+      block.classList.add('rv-active');
+      var text = (pendingSelection ? pendingSelection.text : (block.dataset.quote || block.textContent || '')).trim();
+      document.getElementById('rv-ann-quote').textContent = text.length > 150 ? text.substring(0, 150) + '...' : text;
+      document.getElementById('rv-ann-input').value = '';
+      document.getElementById('rv-ann-bar').style.display = 'block';
+      document.getElementById('rv-ann-list').style.display = 'none';
+      setTimeout(function() { document.getElementById('rv-ann-input').focus(); }, 100);
+    }
+
+    function hideAnnBar() {
+      document.getElementById('rv-ann-bar').style.display = 'none';
+      pendingSelection = null;
+      if (activeBlock) { activeBlock.classList.remove('rv-active'); activeBlock = null; }
+    }
+
+    function addAnnotation() {
+      var comment = document.getElementById('rv-ann-input').value.trim();
+      if (!comment || !activeBlock) return;
+      var sel = pendingSelection;
+      var annId = ++annSeq;
+      annotations.push({
+        id: annId,
+        idx: parseInt(activeBlock.dataset.idx),
+        slot: activeBlock.dataset.slot || null,
+        quote: (sel ? sel.text : (activeBlock.dataset.quote || activeBlock.textContent || '')).trim().substring(0, 300),
+        // 选区批注额外带段内字符偏移：CC 改稿时能唯一定位到这一句（同段落重复句也不会认错）
+        start: sel ? sel.start : null,
+        end: sel ? sel.end : null,
+        whole: !sel,
+        comment: comment
+      });
+      if (sel && sel.range) highlightRange(sel.range, activeBlock, annId);
+      else { activeBlock.classList.add('rv-annotated'); activeBlock.dataset.ann = String(annId); }
+      var s = window.getSelection(); if (s) s.removeAllRanges();
+      hideAnnBar();
+      updateToolbar();
+      showToast('✅ 已添加批注');
+    }
+
+    // ─── 选中文字即批注（Word 审阅的做法：批注挂在一句话上，不是整段）───
+    var pendingSelection = null;
+    var annSeq = 0;   // 批注号，用来把页面上的痕迹和列表里的条目对上
+
+    // 撤掉批注在页面上留下的痕迹（划词高亮 span + 整段底色）。
+    // id 省略 = 全清。批注是一次性意见，删掉 / 提交后页面必须回到干净状态。
+    function clearAnnMarks(id) {
+      var q = id == null ? '' : '[data-ann="' + id + '"]';
+      document.querySelectorAll('.rv-mark' + q).forEach(function(span) {
+        var p = span.parentNode;
+        if (!p) return;
+        while (span.firstChild) p.insertBefore(span.firstChild, span);
+        p.removeChild(span);
+        p.normalize();          // 把切开的文本节点合回去，避免反复批注把 DOM 切碎
+      });
+      document.querySelectorAll('.rv-annotated' + q).forEach(function(el) {
+        el.classList.remove('rv-annotated');
+        delete el.dataset.ann;
+      });
+    }
+
+    // 选区起点在 root 纯文本里的字符偏移（用于回传"段内第几个字符起"）
+    function textOffset(root, node, offset) {
+      var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
+      var n, acc = 0;
+      while ((n = walker.nextNode())) {
+        if (n === node) return acc + offset;
+        acc += n.nodeValue.length;
+      }
+      return acc;
+    }
+
+    // 高亮选中片段：逐个文本节点原地包 <span class="rv-mark">。
+    // 不用 surroundContents —— Word 一句话常被拆成多个 run（<span>），跨元素时它直接抛错。
+    // 先在首尾把文本节点切开，再把完全落在选区内的文本节点各自就地包起来，DOM 结构和版式不变。
+    function highlightRange(range, fallbackEl, annId) {
+      try {
+        var r = range.cloneRange();
+        if (r.startContainer.nodeType === 3 && r.startOffset > 0) {
+          var head = r.startContainer, startOff = r.startOffset;
+          var endSame = (r.endContainer === head), endOff = r.endOffset;
+          var tail = head.splitText(startOff);        // head 留前半，tail 是选中开始处
+          r.setStart(tail, 0);
+          if (endSame) r.setEnd(tail, endOff - startOff);
+        }
+        if (r.endContainer.nodeType === 3 && r.endOffset < r.endContainer.nodeValue.length) {
+          r.endContainer.splitText(r.endOffset);
+        }
+        var root = r.commonAncestorContainer;
+        if (root.nodeType === 3) root = root.parentNode;
+        var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
+        var nodes = [], n;
+        while ((n = walker.nextNode())) {
+          if (!n.nodeValue || !n.nodeValue.trim()) continue;
+          var nr = document.createRange();
+          nr.selectNodeContents(n);
+          var inside = r.compareBoundaryPoints(Range.START_TO_START, nr) <= 0
+                    && r.compareBoundaryPoints(Range.END_TO_END, nr) >= 0;
+          if (inside) nodes.push(n);
+        }
+        if (!nodes.length) throw new Error('选区内无文本节点');
+        nodes.forEach(function(t) {
+          var span = document.createElement('span');
+          span.className = 'rv-mark';
+          if (annId != null) span.dataset.ann = String(annId);
+          t.parentNode.insertBefore(span, t);
+          span.appendChild(t);
+        });
+      } catch (e) {
+        fallbackEl.classList.add('rv-annotated');   // 兜底：整段标记，批注内容仍是精确片段
+        if (annId != null) fallbackEl.dataset.ann = String(annId);
+      }
+    }
+
+    function readSelection() {
+      if (document.body.classList.contains('interact-mode')) return null;
+      var sel = window.getSelection();
+      if (!sel || sel.isCollapsed || sel.rangeCount === 0) return null;
+      var text = sel.toString().replace(/\s+/g, ' ').trim();
+      if (text.length < 2) return null;
+      var range = sel.getRangeAt(0);
+      var anchor = range.commonAncestorContainer;
+      var el = anchor.nodeType === 1 ? anchor : anchor.parentElement;
+      if (!el || el.closest('#rv-ann-bar, #rv-toolbar, #rv-ann-list')) return null;
+      var block = el.closest('.rv-slot, .rv-block');
+      if (!block) return null;
+      return {
+        block: block,
+        text: text,
+        start: textOffset(block, range.startContainer, range.startOffset),
+        end: textOffset(block, range.endContainer, range.endOffset),
+        range: range.cloneRange()
+      };
+    }
+
+    // 鼠标松开 / 手指离开屏幕后判定选区（iOS 长按选词也走 touchend + selectionchange 兜底）
+    var _selTimer = null, _dragging = false;
+    function onMaybeSelection() {
+      clearTimeout(_selTimer);
+      _selTimer = setTimeout(function() {
+        if (_dragging) return;                 // 还在拖选，等松手再弹
+        var s = readSelection();
+        if (s) showAnnBar(s.block, s);
+      }, 120);
+    }
+    document.addEventListener('mousedown', function() { _dragging = true; });
+    document.addEventListener('mouseup', function() { _dragging = false; onMaybeSelection(); });
+    document.addEventListener('touchend', onMaybeSelection);
+    document.addEventListener('selectionchange', function() {
+      if (document.getElementById('rv-ann-bar').style.display === 'block') return;  // 批注条已开，别打断输入
+      onMaybeSelection();
+    });
+
+    function updateToolbar() {
+      var n = annotations.length;
+      document.getElementById('rv-ann-count').textContent = n;
+      document.getElementById('rv-btn-list').style.display = n > 0 ? 'flex' : 'none';
+      var list = document.getElementById('rv-ann-list');
+      list.innerHTML = annotations.map(function(a, i) {
+        return '<div class="rv-list-item"><span class="rv-list-del" data-i="' + i + '">✖</span>' +
+          '<div class="rv-list-quote">“' + esc(a.quote.substring(0, 80)) + '”</div>' +
+          '<div class="rv-list-comment">→ ' + esc(a.comment) + '</div></div>';
+      }).join('');
+      list.querySelectorAll('.rv-list-del').forEach(function(el) {
+        el.addEventListener('click', function() {
+          var i = parseInt(this.dataset.i);
+          clearAnnMarks(annotations[i].id);   // 条目删了，页面上的高亮/底色也得跟着走
+          annotations.splice(i, 1);
+          updateToolbar();
+        });
+      });
+    }
+
+    // ─── Submit ───
+    async function submitFeedback() {
+      if (!annotations.length) { showToast('没有批注内容'); return; }
+      if (!fileInfo) { showToast('文件未加载'); return; }
+      var md = '## 对 ' + fileInfo.name + ' 的反馈\n\n';
+      md += '共 ' + annotations.length + ' 条批注。\n\n';
+      // 锚点说明按"实际用到的锚点种类"给，不按格式给 —— 同一份文件可能混用（正文段 + 表格行）
+      var kinds = [];
+      function useKind(test, line) {
+        if (annotations.some(test) && kinds.indexOf(line) < 0) kinds.push(line);
+      }
+      useKind(function(a) { return a.slot && a.slot.indexOf('para.') === 0; },
+        '`para.N` = Word 正文第 N 段（document.xml 里 w:p 顺序，含表格内段落、不含页眉页脚，'
+        + 'python-docx 用 `doc.element.body.iter(qn("w:p"))` 对齐）');
+      useKind(function(a) { return a.slot && /^page\.\d+\.b\d+$/.test(a.slot); },
+        '`page.N.bM` = PDF 第 N 页、页内第 M 个文本块（按版面从上到下、分栏后排序）');
+      useKind(function(a) { return a.slot && a.slot.indexOf('sheet[') === 0; },
+        '`sheet[表名]/row.N` = 该 sheet 的第 N 行（含表头，N 从 1 起）');
+      useKind(function(a) { return a.slot && /^table\.\d+\/row\.\d+$/.test(a.slot); },
+        '`table.T/row.N` = 文中第 T 张表的第 N 行（含表头）');
+      useKind(function(a) { return a.slot && a.slot.indexOf('>') > 0; },
+        '锚点是相对 `<body>` 的 CSS 路径，可直接 querySelector 定位到源码那一段');
+      useKind(function(a) { return !a.slot; },
+        '`§N` = 渲染后第 N 个可批注块（代码/文本文件按 10 行一块）');
+      if (kinds.length) {
+        md += '**锚点说明**：\n';
+        for (var ki = 0; ki < kinds.length; ki++) md += '- ' + kinds[ki] + '\n';
+        md += '- `chars a-b` 是该块纯文本内的字符区间；引文是原文精确片段，可直接检索定位\n';
+        md += '\n';
+      }
+      for (var i = 0; i < annotations.length; i++) {
+        var a = annotations[i];
+        var loc = a.slot ? '`' + a.slot + '`' : '§' + (a.idx + 1);
+        if (!a.whole && a.start != null) loc += ' `chars ' + a.start + '-' + a.end + '`';
+        md += '### ' + (i + 1) + '. ' + loc + (a.whole ? '（整段）' : '（选中片段）') + '\n';
+        md += '> ' + a.quote.substring(0, 300) + (a.quote.length > 300 ? '...' : '') + '\n\n';
+        md += a.comment + '\n\n';
+      }
+      showToast('发送中...');
+      try {
+        // 先逐条持久化到 token（终端不在也能凭 token 用 /annotations 全量捞回；
+        // 不入库的话网页批注只活在 actor 消息流里，换终端就丢可发现性）
+        for (var ai = 0; ai < annotations.length; ai++) {
+          var an = annotations[ai];
+          try {
+            await fetch('/api/review/' + token + '/annotate', {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                anchor: (an.slot || ('§' + (an.idx + 1))) + (an.whole ? '' : ' chars ' + an.start + '-' + an.end),
+                text: an.comment
+              })
+            });
+          } catch (e2) { /* 入库失败不阻断投递 */ }
+        }
+        var r = await fetch('/api/review/' + token + '/feedback', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ markdown: md })
+        });
+        var d = await r.json();
+        if (d.ok) {
+          annotations = [];
+          clearAnnMarks();          // 提交即交付完毕：划词高亮和整段底色一起清干净
+          updateToolbar();
+          // 有登录态(本人) → 跳回当前终端；匿名访客 → 原地停留(否则被弹登录页)。
+          // 登录 cookie 是 HttpOnly 读不到，用受保护端点探针判别。
+          var loggedIn = false;
+          try { loggedIn = (await fetch('/api/actors')).ok; } catch (e3) {}
+          if (loggedIn) {
+            showToast('✅ 已发送，跳回对话…');
+            setTimeout(function() {
+              if (fileInfo.terminalId) {
+                window.location.href = '/#/chat?id=' + encodeURIComponent(fileInfo.terminalId);
+              } else {
+                window.history.back();
+              }
+            }, 800);
+          } else {
+            showToast('✅ 已提交，感谢反馈！可继续批注或关闭页面');
+          }
+        } else { showToast('❌ ' + (d.error || '发送失败')); }
+      } catch (e) { showToast('❌ 网络错误'); }
+    }
+
+    // ─── Events ───
+    function onContentClick(e) {
+      if (document.body.classList.contains('interact-mode')) return;  // 交互模式不批注
+      var block = e.target.closest('.rv-slot, .rv-block');
+      if (!block || e.target.tagName === 'A') return;
+      // 有选区 → 已由 onMaybeSelection 挂到那句话上，别被整段覆盖
+      var s = window.getSelection();
+      if (s && !s.isCollapsed && s.toString().trim().length >= 2) return;
+      showAnnBar(block);
+    }
+    document.addEventListener('click', function(e) {
+      var block = e.target.closest('.rv-slot, .rv-block');
+      var bar = document.getElementById('rv-ann-bar');
+      var toolbar = document.getElementById('rv-toolbar');
+      var list = document.getElementById('rv-ann-list');
+      if (document.body.classList.contains('interact-mode')) return;  // 交互模式不批注
+      if (block) {
+        e.stopPropagation();
+        onContentClick(e);
+      } else if (!bar.contains(e.target) && !toolbar.contains(e.target) && !list.contains(e.target)) {
+        hideAnnBar();
+        list.style.display = 'none';
+      }
+    });
+    document.getElementById('rv-ann-add').addEventListener('click', addAnnotation);
+    document.getElementById('rv-ann-cancel').addEventListener('click', hideAnnBar);
+    document.getElementById('rv-ann-input').addEventListener('keydown', function(e) {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); addAnnotation(); }
+    });
+    document.getElementById('rv-btn-submit').addEventListener('click', submitFeedback);
+
+    // 交互/批注 模式开关（默认进来 = 批注；按钮文字 = 点一下会切到的那个模式）
+    document.getElementById('rv-mode-toggle').addEventListener('click', function() {
+      var interact = document.body.classList.toggle('interact-mode');
+      this.textContent = interact ? '✏️ 批注模式' : '🖱 交互模式';
+      if (interact) { hideAnnBar(); document.getElementById('rv-ann-list').style.display = 'none'; }
+    });
+    document.getElementById('rv-btn-list').addEventListener('click', function() {
+      var list = document.getElementById('rv-ann-list');
+      list.style.display = list.style.display === 'none' ? 'block' : 'none';
+    });
+
+    function esc(s) { return s ? s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;') : ''; }
+    function showToast(msg) {
+      var t = document.getElementById('rv-toast');
+      t.textContent = msg; t.style.display = 'block';
+      setTimeout(function() { t.style.display = 'none'; }, 2000);
+    }
+  </script>
+</body>
+</html>

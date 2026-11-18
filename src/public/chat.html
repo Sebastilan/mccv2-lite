@@ -1,0 +1,12 @@
+<!DOCTYPE html>
+<!-- chat.html — 向后兼容重定向：旧书签 /chat.html?id=xxx → /#/chat?id=xxx -->
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <script>
+    var id = new URLSearchParams(location.search).get('id');
+    location.replace('/' + (id ? '#/chat?id=' + encodeURIComponent(id) : ''));
+  </script>
+</head>
+<body></body>
+</html>

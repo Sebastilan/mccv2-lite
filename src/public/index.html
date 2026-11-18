@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<!-- index.html — SPA 统一入口（dashboard + chat 两个 page，路由由 core/router.js 管理）-->
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>MCC</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="lib/katex.min.css">
+</head>
+<body>
+  <!-- ── Dashboard 页 ─────────────────────────────────────────────────── -->
+  <div id="page-dashboard" class="page active">
+    <header class="header">
+      <div id="header-left"></div>
+      <h1 id="mcc-title">MCC</h1>
+    </header>
+    <div id="dashboard-banner"></div>
+    <div id="terminal-list" class="terminal-list">
+      <div id="term-list-body"></div>
+      <button id="btn-add-terminal" class="btn-add-terminal-bottom">+ 新建终端</button>
+    </div>
+  </div>
+
+  <!-- 创建终端弹窗（dashboard page 专属） -->
+  <div id="modal-create" class="modal" style="display:none">
+    <div class="modal-content">
+      <h3>新建终端</h3>
+      <div id="field-kind" class="form-group">
+        <label>Actor 类型</label>
+        <select id="select-kind">
+          <option value="cc" selected>CC（Claude Code）</option>
+          <option value="chat">慢聊</option>
+        </select>
+      </div>
+      <div id="field-model" class="form-group">
+        <label>模型</label>
+        <select id="select-model"></select>
+      </div>
+      <div id="field-effort" class="form-group">
+        <label>思考深度</label>
+        <select id="select-effort">
+          <option value="" selected>off（关闭）</option>
+          <option value="low">low（最少思考）</option>
+          <option value="medium">medium</option>
+          <option value="high">high</option>
+          <option value="xhigh">xhigh</option>
+          <option value="max">max</option>
+        </select>
+      </div>
+      <div id="field-task" class="form-group">
+        <label>任务 <small>(可选)</small></label>
+        <input id="input-task" type="text" placeholder="输入初始任务...">
+      </div>
+      <div id="field-advisor-type" class="form-group" style="display:none">
+        <label>身份</label>
+        <select id="select-advisor-type">
+          <option value="main" selected>君（主持人）</option>
+          <option value="aux">臣（辅佐者）</option>
+          <option value="auto">佐（自动）</option>
+        </select>
+      </div>
+      <div id="field-driver" class="form-group">
+        <label>驱动</label>
+        <select id="select-driver">
+          <option value="" selected>print（默认）</option>
+          <option value="pty">pty（tmux 交互式，订阅额度）</option>
+        </select>
+      </div>
+      <div class="modal-actions">
+        <button id="btn-modal-cancel" class="btn-secondary">取消</button>
+        <button id="btn-modal-create" class="btn-primary">创建</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Chat 页 ──────────────────────────────────────────────────────── -->
+  <div id="page-chat" class="page">
+    <div id="drag-overlay"><span class="drag-icon">📁</span><span>松手即可上传</span></div>
+    <header class="header terminal-header">
+      <div id="header-left"></div>
+      <button id="btn-back" class="btn-icon">&larr;</button>
+      <div class="header-info">
+        <span id="term-project" class="term-project"></span>
+        <span id="term-status" class="status-badge"></span>
+        <span id="term-mode" class="card-mode" style="display:none"></span>
+        <span id="term-model" class="term-model"></span>
+        <span id="term-ctx" class="term-ctx"></span>
+      </div>
+      <div id="chat-header-right"></div>
+    </header>
+    <div id="event-stream" class="event-stream"></div>
+    <div id="busy-bar" class="busy-bar">
+      <span id="busy-spinner" class="busy-spinner" style="display:none"></span>
+      <span id="busy-tool" class="busy-tool-text"></span>
+    </div>
+    <div id="suggestion-chips" class="suggestion-chips"></div>
+    <div id="terminal-tabs" class="terminal-tabs">
+      <div id="tabs-scroll" class="tabs-scroll"></div>
+    </div>
+    <div id="attach-preview" class="attach-preview"></div>
+    <div id="chat-slash-slot"></div>
+    <div id="slash-menu" class="slash-menu"></div>
+    <div id="mention-menu" class="slash-menu"></div>
+    <div id="input-area" class="input-area">
+      <!-- 不限类型：处理端按 base64 通吃任意文件；写死白名单会让手机把 pptx/docx/zip 等灰掉 -->
+      <input type="file" id="file-input" style="display:none" multiple>
+      <textarea id="msg-input" class="msg-input" placeholder="输入消息..." rows="1"></textarea>
+      <div id="input-toolbar" class="input-toolbar">
+        <button id="btn-attach" class="toolbar-btn" title="上传附件">+</button>
+        <button id="btn-cmd" class="toolbar-btn" title="快捷命令">/</button>
+        <div id="chat-input-toolbar-slot"></div>
+        <span class="toolbar-spacer"></span>
+        <button id="btn-send" class="toolbar-btn-send" title="发送"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg></button>
+        <button id="btn-interrupt" class="toolbar-btn-interrupt" style="display:none" title="中断">■</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast-container" class="toast-container"></div>
+
+  <div id="err-overlay" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.92);color:#ff4444;z-index:99999;padding:24px;font:14px monospace;overflow:auto;white-space:pre-wrap;"></div>
+  <script>
+  (function(){
+    var el=document.getElementById('err-overlay');
+    function show(msg,src){
+      el.style.display='block';
+      el.textContent+=(el.textContent?'\n\n':'')+'['+src+'] '+msg;
+    }
+    window.addEventListener('error',function(e){
+      show((e.message||'Unknown error')+' — '+e.filename+':'+e.lineno+':'+e.colno,'JS');
+    });
+    window.addEventListener('unhandledrejection',function(e){
+      show((e.reason&&e.reason.message)||String(e.reason),'Promise');
+    });
+    // 5s 后若「应用整体没渲染出来」才诊断。判活口径要覆盖两种正常态：
+    //   1) 全权限会话 → 仪表盘有终端卡片
+    //   2) 分享链接访客(scoped) → 被强制停在单终端聊天页，仪表盘本就永不渲染，
+    //      改看聊天页是否 active 且事件流有内容 / body 是否已打 scoped 类。
+    // 否则会对正常的访客页误报，红条 overlay 盖住已渲染好的聊天(历史误诊)。
+    setTimeout(function(){
+      var hasCards = !!document.querySelector('#term-list-body .term-card');
+      var chatAlive = (document.querySelector('#page-chat.active') &&
+                       document.querySelector('#event-stream') &&
+                       document.querySelector('#event-stream').children.length > 0);
+      var scoped = document.body.classList.contains('scoped');
+      if(!hasCards && !chatAlive && !scoped){
+        show('应用未渲染。可能原因：ES module 未加载 / CDN 资源超时 / CORS 拦截','DIAG');
+      }
+    },5000);
+  })();
+  </script>
+  <script defer src="lib/marked.min.js"></script>
+  <script defer src="lib/highlight.min.js"></script>
+  <script defer src="lib/katex.min.js"></script>
+  <script type="module" src="app.js"></script>
+</body>
+</html>

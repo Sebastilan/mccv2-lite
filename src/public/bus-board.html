@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Bus 主板</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: #fff; color: #222;
+    padding: 20px 16px; line-height: 1.5; font-size: 14px;
+    max-width: 720px; margin: 0 auto;
+  }
+
+  .chip { max-width: 640px; margin: 0 auto 14px; }
+
+  /* 引脚 */
+  .pin-row {
+    display: flex; justify-content: space-around;
+    padding: 0 20px;
+  }
+  .pin {
+    display: flex; flex-direction: column; align-items: center;
+    cursor: pointer; user-select: none; width: 14%;
+  }
+  .pin-stem { width: 2px; height: 12px; background: #222; }
+  .pin-num {
+    font-family: ui-monospace, Consolas, monospace;
+    font-size: 13px; font-weight: 600;
+    padding: 2px 0;
+  }
+  .pin.actors   .pin-num { color: #2a7; }
+  .pin.messages .pin-num { color: #c63; }
+  .pin.subs     .pin-num { color: #36b; }
+  .pin.setup    .pin-num { color: #888; }
+  .pin.active .pin-num {
+    background: #222; color: #fff; padding: 2px 6px;
+  }
+
+  /* 主板 */
+  .board {
+    border: 2px solid #222;
+    padding: 22px 16px 18px;
+    background: #fff;
+  }
+  .board-title {
+    text-align: center;
+    font-size: 12px; color: #888;
+    margin-bottom: 18px;
+    letter-spacing: 1px;
+  }
+
+  /* 业务流程图 */
+  .flow {
+    display: flex; flex-direction: column;
+    align-items: center;
+    gap: 10px;
+  }
+  .row { display: flex; align-items: center; gap: 12px; }
+
+  .node {
+    border: 1px solid #999;
+    padding: 8px 14px;
+    font-family: ui-monospace, Consolas, monospace;
+    font-size: 13px;
+    background: #fff;
+    cursor: pointer;
+    user-select: none;
+    transition: all 0.12s;
+    min-width: 86px;
+    text-align: center;
+  }
+  .node:hover, .node.active {
+    border-color: #06c;
+    background: #eef4fa;
+  }
+  .node.active {
+    border-width: 2px;
+    padding: 7px 13px;
+  }
+  .node b { color: #06c; }
+  .node small {
+    display: block;
+    font-family: -apple-system, sans-serif;
+    font-size: 10px;
+    color: #888;
+    margin-top: 1px;
+  }
+  .node.arrow-msg {
+    border-style: dashed;
+    min-width: 70px;
+  }
+  .node.arrow-msg b { color: #c63; }
+  .node.star-node {
+    border-color: #c63;
+    background: #fff5e6;
+    min-width: 140px;
+  }
+  .node.star-node b { color: #c63; }
+
+  .arrow-h {
+    color: #666; font-size: 14px;
+    font-family: ui-monospace, monospace;
+  }
+  .arrow-h .lbl {
+    display: block; font-size: 10px;
+    color: #c63; text-align: center;
+    margin-bottom: -3px;
+  }
+  .arrow-v {
+    color: #666; font-size: 16px;
+    text-align: center;
+  }
+  .star {
+    color: #c63;
+    font-size: 16px;
+    text-align: center;
+  }
+  .star .note {
+    display: block;
+    font-family: -apple-system, sans-serif;
+    font-size: 10px;
+    color: #888;
+    margin-top: 1px;
+  }
+
+  .fan {
+    display: flex; gap: 30px;
+    justify-content: center;
+  }
+  .fan-line {
+    display: flex; flex-direction: column;
+    align-items: center; gap: 4px;
+  }
+
+  /* 详情面板 */
+  .detail {
+    border: 1px solid #999;
+    padding: 12px 14px;
+    margin-bottom: 16px;
+    min-height: 90px;
+  }
+  .detail.empty {
+    border-style: dashed;
+    color: #aaa;
+    text-align: center;
+    padding: 30px 14px;
+    font-size: 12px;
+  }
+  .detail h3 {
+    font-family: ui-monospace, Consolas, monospace;
+    font-size: 13px;
+    color: #06c;
+    margin-bottom: 4px;
+  }
+  .detail .src {
+    font-size: 10px; color: #888;
+    margin-bottom: 8px;
+  }
+  .detail pre {
+    background: #fafafa; border: 1px solid #ddd;
+    padding: 6px 8px;
+    font-family: ui-monospace, Consolas, monospace;
+    font-size: 11px; line-height: 1.5;
+    overflow-x: auto;
+  }
+
+  /* 图例 */
+  .legend {
+    border: 1px solid #999;
+    padding: 12px 14px;
+  }
+  .legend-title {
+    font-size: 12px; color: #666;
+    margin-bottom: 8px; letter-spacing: 0.5px;
+  }
+  .legend-items {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 2px 14px;
+    font-size: 12px;
+  }
+  @media (max-width: 460px) {
+    .legend-items { grid-template-columns: 1fr; }
+  }
+  .legend-item {
+    padding: 4px 6px;
+    font-family: ui-monospace, Consolas, monospace;
+    border-left: 3px solid transparent;
+    cursor: pointer;
+  }
+  .legend-item:hover { background: #f5f5f5; }
+  .legend-item.actors   { border-left-color: #2a7; }
+  .legend-item.messages { border-left-color: #c63; }
+  .legend-item.subs     { border-left-color: #36b; }
+  .legend-item.setup    { border-left-color: #888; }
+  .legend-item.active {
+    background: #eef4fa; border-left-width: 5px;
+  }
+  .legend-item .num {
+    display: inline-block; width: 22px; font-weight: 600;
+  }
+  .legend-item .nm { color: #06c; }
+  .legend-item .star { color: #c63; font-weight: 600; }
+</style>
+</head>
+<body>
+
+<div class="chip">
+
+  <!-- 上排引脚 -->
+  <div class="pin-row">
+    <div class="pin actors"   data-n="1"><div class="pin-num">1</div><div class="pin-stem"></div></div>
+    <div class="pin actors"   data-n="2"><div class="pin-num">2</div><div class="pin-stem"></div></div>
+    <div class="pin actors"   data-n="3"><div class="pin-num">3</div><div class="pin-stem"></div></div>
+    <div class="pin messages" data-n="4"><div class="pin-num">4</div><div class="pin-stem"></div></div>
+    <div class="pin messages" data-n="5"><div class="pin-num">5</div><div class="pin-stem"></div></div>
+    <div class="pin messages" data-n="6"><div class="pin-num">6</div><div class="pin-stem"></div></div>
+  </div>
+
+  <!-- 主板 -->
+  <div class="board">
+    <div class="board-title">BUS 主板 · 一次发消息</div>
+
+    <div class="flow">
+
+      <div class="row">
+        <div class="node" data-info="actor1"><b>actor1</b><small>human</small></div>
+        <div class="node arrow-msg" data-info="msg"><b>msg</b><small>──▶</small></div>
+        <div class="node" data-info="actor2"><b>actor2</b><small>cc</small></div>
+      </div>
+
+      <div class="arrow-v">│</div>
+
+      <div class="node star-node" data-info="heartbeat">
+        <b>★ 心跳</b><small>查 subs(actor2)</small>
+      </div>
+
+      <div class="arrow-v">│</div>
+
+      <div class="fan">
+        <div class="fan-line">
+          <div class="arrow-v">▼</div>
+          <div class="node" data-info="watcher1"><b>watcher1</b><small>订 actor2</small></div>
+        </div>
+        <div class="fan-line">
+          <div class="arrow-v">▼</div>
+          <div class="node" data-info="watcher2"><b>watcher2</b><small>订 actor2</small></div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- 下排引脚 -->
+  <div class="pin-row">
+    <div class="pin subs"  data-n="7"><div class="pin-stem"></div><div class="pin-num">7</div></div>
+    <div class="pin subs"  data-n="8"><div class="pin-stem"></div><div class="pin-num">8</div></div>
+    <div class="pin subs"  data-n="9"><div class="pin-stem"></div><div class="pin-num">9</div></div>
+    <div class="pin setup" data-n="10"><div class="pin-stem"></div><div class="pin-num">10</div></div>
+    <div class="pin setup" data-n="11"><div class="pin-stem"></div><div class="pin-num">11</div></div>
+    <div class="pin setup" data-n="12"><div class="pin-stem"></div><div class="pin-num">12</div></div>
+  </div>
+</div>
+
+<!-- 详情面板 -->
+<div class="detail empty" id="detail">
+  点流程中任意元素 / 引脚 / 图例 看真实数据
+</div>
+
+<!-- 图例 -->
+<div class="legend">
+  <div class="legend-title">引脚定义（点引脚或定义双向高亮）</div>
+  <div class="legend-items">
+    <div class="legend-item actors"   data-n="1"><span class="num">1</span> <span class="nm">registerActor</span></div>
+    <div class="legend-item actors"   data-n="2"><span class="num">2</span> <span class="nm">updateActor</span></div>
+    <div class="legend-item actors"   data-n="3"><span class="num">3</span> <span class="nm">markStale</span></div>
+    <div class="legend-item messages" data-n="4"><span class="num">4</span> <span class="nm">insertMessage</span> <span class="star">★</span></div>
+    <div class="legend-item messages" data-n="5"><span class="num">5</span> <span class="nm">getNewSince</span></div>
+    <div class="legend-item messages" data-n="6"><span class="num">6</span> <span class="nm">getMaxId</span></div>
+    <div class="legend-item subs"     data-n="7"><span class="num">7</span> <span class="nm">addSub</span></div>
+    <div class="legend-item subs"     data-n="8"><span class="num">8</span> <span class="nm">removeSub</span></div>
+    <div class="legend-item subs"     data-n="9"><span class="num">9</span> <span class="nm">listSubs</span></div>
+    <div class="legend-item setup"    data-n="10"><span class="num">10</span> <span class="nm">new Bus</span></div>
+    <div class="legend-item setup"    data-n="11"><span class="num">11</span> <span class="nm">applyMigrations</span></div>
+    <div class="legend-item setup"    data-n="12"><span class="num">12</span> <span class="nm">setBroadcaster</span></div>
+  </div>
+</div>
+
+<script>
+  // 节点数据（actor / message / watcher 的真实表行）
+  const NODE_DATA = {
+    actor1: {
+      title: 'actor1',
+      src: 'actors 表 · 一行',
+      code: `{
+  id:     'actor1',
+  kind:   'human',
+  status: 'idle',
+  meta:   {}
+}`
+    },
+    actor2: {
+      title: 'actor2',
+      src: 'actors 表 · 一行',
+      code: `{
+  id:     'actor2',
+  kind:   'cc',
+  status: 'idle',
+  meta:   { model: 'sonnet' }
+}`
+    },
+    watcher1: {
+      title: 'watcher1（订阅 actor2）',
+      src: 'actors 表 · 一行 + subs 表 · 一行',
+      code: `// actors
+{ id: 'watcher1', kind: 'human', ... }
+
+// subs
+{ watcher_id: 'watcher1', target_id: 'actor2' }`
+    },
+    watcher2: {
+      title: 'watcher2（订阅 actor2）',
+      src: 'actors 表 · 一行 + subs 表 · 一行',
+      code: `// actors
+{ id: 'watcher2', kind: 'human', ... }
+
+// subs
+{ watcher_id: 'watcher2', target_id: 'actor2' }`
+    },
+    msg: {
+      title: 'msg · 这条消息本身',
+      src: 'messages 表 · 一行（actor1 写入触发整套流程）',
+      code: `{
+  id:       1,
+  from_id:  'actor1',
+  to_id:    'actor2',
+  kind:     'user_msg',
+  payload:  { text: '帮我跑测试' },
+  ts:       1748000000000,
+  reply_to: null,
+  consumed: 0
+}`
+    },
+    heartbeat: {
+      title: '★ 心跳 · 系统的核心规律',
+      src: 'bus.insertMessage 内部最后一行（broadcast.mjs 接力）',
+      code: `// bus.mjs
+insertMessage(msg) {
+  // ... INSERT INTO messages ...
+  if (this.broadcaster) {
+    this.broadcaster.onMessage(inserted);  // ★
+  }
+}
+
+// broadcast.mjs
+_dispatch(msg) {
+  // 查谁订阅了 msg.to_id，逐个推 WS
+  for (const w of bus.listSubs(msg.to_id)) {
+    wsMap.get(w)?.send(envelope);
+  }
+}`
+    }
+  };
+
+  // 引脚数据（12 个）
+  const PIN_DATA = {
+    1:  { title: 'registerActor',   src: '注册新 actor（actors +1 行）', code: '' },
+    2:  { title: 'updateActor',     src: '改 actor 部分字段',           code: '' },
+    3:  { title: 'markStale',       src: '清浏览器掉线僵尸',           code: '' },
+    4:  { title: 'insertMessage ★', src: '心跳！messages +1 行 + 触发广播', code: '' },
+    5:  { title: 'getNewSince',     src: '拉新消息（兜底用）',         code: '' },
+    6:  { title: 'getMaxId',        src: '查最大 message.id',          code: '' },
+    7:  { title: 'addSub',          src: '加订阅（subs +1 行）',       code: '' },
+    8:  { title: 'removeSub',       src: '删订阅',                     code: '' },
+    9:  { title: 'listSubs',        src: '查 target 的订阅者（广播时用）', code: '' },
+    10: { title: 'new Bus',         src: '启动序列第一步',             code: '' },
+    11: { title: 'applyMigrations', src: '建三张表',                   code: '' },
+    12: { title: 'setBroadcaster',  src: '反向注入传令官',             code: '' },
+  };
+
+  const detail = document.getElementById('detail');
+  function show(d) {
+    detail.className = 'detail';
+    detail.innerHTML = `
+      <h3>${d.title}</h3>
+      <div class="src">${d.src}</div>
+      ${d.code ? `<pre>${d.code}</pre>` : ''}
+    `;
+  }
+
+  document.querySelectorAll('.node').forEach(n => {
+    n.addEventListener('click', () => {
+      document.querySelectorAll('.node').forEach(x => x.classList.toggle('active', x === n));
+      show(NODE_DATA[n.dataset.info]);
+    });
+  });
+
+  const pins = document.querySelectorAll('.pin');
+  const legends = document.querySelectorAll('.legend-item');
+  function highlight(n) {
+    pins.forEach(p => p.classList.toggle('active', p.dataset.n === n));
+    legends.forEach(l => l.classList.toggle('active', l.dataset.n === n));
+    show(PIN_DATA[n]);
+  }
+  pins.forEach(p    => p.addEventListener('click', () => highlight(p.dataset.n)));
+  legends.forEach(l => l.addEventListener('click', () => highlight(l.dataset.n)));
+</script>
+
+</body>
+</html>
