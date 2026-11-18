@@ -6,7 +6,7 @@
 
 [![MCC demo (click for the full video)](docs/demo-preview.gif)](https://github.com/Sebastilan/mccv2-lite/releases/download/v0.1.0/mcc-demo.mp4)
 
-▶ **[Full demo, 1 min 54 s (Chinese + English captions; real phone-viewport run at real speed, no edits)](https://github.com/Sebastilan/mccv2-lite/releases/download/v0.1.0/mcc-demo.mp4)** · the GIF above is a 4× preview
+▶ **[Full demo, 2 min 8 s (Chinese voice-over + Chinese/English captions; 1080p phone-viewport run at real speed, no edits)](https://github.com/Sebastilan/mccv2-lite/releases/download/v0.1.0/mcc-demo.mp4)** · the GIF above is a 4× preview
 
 > Note: the web UI and MCC's built-in instructions to the AI are currently in **Chinese**. You can talk to the AI in any language.
 

@@ -1,6 +1,6 @@
 # MCC 介绍视频分镜(约 2 分钟 · 手机竖屏)
 
-样片不随包,挂在 GitHub Release:https://github.com/Sebastilan/mccv2-lite/releases/download/v0.1.0/mcc-demo.mp4 (1 分 54 秒,中英字幕,手机视口自动真点录制,全程真实速度、没有剪辑;README 里的 docs/demo-preview.gif 是它的 4 倍速预览)。下面的镜头表就是照样片排的,重录时照着走。
+样片不随包,挂在 GitHub Release:https://github.com/Sebastilan/mccv2-lite/releases/download/v0.1.0/mcc-demo.mp4 (2 分 08 秒,中文配音 + 中英字幕,1080 宽高清,手机视口自动真点录制,全程真实速度、没有剪辑;README 里的 docs/demo-preview.gif 是它的 4 倍速预览)。下面的镜头表就是照样片排的,重录时照着走。
 
 ## 一、手机上比电脑还方便的地方(按这些点排镜头)
 

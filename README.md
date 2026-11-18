@@ -6,7 +6,7 @@
 
 [![MCC 介绍视频(点开看完整版)](docs/demo-preview.gif)](https://github.com/Sebastilan/mccv2-lite/releases/download/v0.1.0/mcc-demo.mp4)
 
-▶ **[完整介绍视频 1 分 54 秒(中英字幕,手机实录、真实速度、没剪辑)](https://github.com/Sebastilan/mccv2-lite/releases/download/v0.1.0/mcc-demo.mp4)** · 上面是 4 倍速预览
+▶ **[完整介绍视频 2 分 08 秒(中文配音 + 中英字幕,1080p 手机实录、真实速度、没剪辑)](https://github.com/Sebastilan/mccv2-lite/releases/download/v0.1.0/mcc-demo.mp4)** · 上面是 4 倍速预览
 
 ## 亮点
 
