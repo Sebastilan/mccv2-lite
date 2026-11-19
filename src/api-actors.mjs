@@ -142,10 +142,38 @@ export function createChatActor({ meta = {}, bus, poolSupervisor, broadcaster })
   return { ok: true, actorId };
 }
 
-// kind → 创建函数路由（加 codex/terra 时只需新建 createXxxActor + 这里加一行）
+/**
+ * 创建 codex kind actor（OpenAI Codex CLI，adapters/codex/codex.mjs，每轮 `codex exec --json`）。
+ * model 留空 = 按本机 codex 配置；不需要 providerEnv，登录态用 `codex login`。
+ */
+export function createCodexActor({ meta = {}, bus, poolSupervisor, broadcaster }) {
+  const fullMeta = { ...meta, projectPath: meta.projectPath || WORKSPACE_ROOT };
+  const actorId = insertAndAnnounceActor({
+    kind: 'codex', idPrefix: 'codex', meta: fullMeta, task: meta.task,
+    bus, poolSupervisor, broadcaster,
+  });
+  return { ok: true, actorId };
+}
+
+/**
+ * 创建 life kind actor（傻循环：一只手 run(shell)，adapters/life/life.mjs → basic.py）。
+ * model 留空 = 按 .env（LIFE_* / DEEPSEEK_API_KEY / ANTHROPIC_API_KEY），见 adapters/life/life.mjs 头注。
+ */
+export function createLifeActor({ meta = {}, bus, poolSupervisor, broadcaster }) {
+  const fullMeta = { ...meta, projectPath: meta.projectPath || WORKSPACE_ROOT };
+  const actorId = insertAndAnnounceActor({
+    kind: 'life', idPrefix: 'life', meta: fullMeta, task: meta.task,
+    bus, poolSupervisor, broadcaster,
+  });
+  return { ok: true, actorId };
+}
+
+// kind → 创建函数路由（加新终端种类时只需新建 createXxxActor + 这里加一行）
 const ACTOR_CREATORS = {
   cc: createCcActor,
   chat: createChatActor,
+  codex: createCodexActor,
+  life: createLifeActor,
 };
 
 // ─────────────────────────────────────────────────────────────────────────

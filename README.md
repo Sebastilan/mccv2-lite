@@ -15,7 +15,8 @@
 - **像改作业一样审 AI 的交付**:AI 交文件时手机上弹出审阅卡,md / pdf / docx / xlsx / 图片 / 公式 / 流程图 / 音视频都能在原文上划选批注;一键提交,批注自动变成清单投回 AI,它逐条改完再交。
 - **傻瓜式**:新建终端不用选路径,所有终端在同一个工作区干活,AI 按任务自己建子目录;一句话派活,AI 拿不准时把问题变成按钮让你点。
 - **交给你的 AI 就能装好**:把仓库地址丢给你的 AI 助手,它照 [`AGENTS.md`](AGENTS.md) 先问你几个问题,再自动装到云服务器或本机、自检、报结果。
-- **自己的服务器、自己的 key**:代码全开源(MIT),数据只在你的机器上;模型可用 Claude 订阅、Anthropic API key 或 DeepSeek key。
+- **三种终端,按需选**:Claude Code(能力最全)、**Codex**(OpenAI,用 ChatGPT 账号)、**傻循环**(几百行的极简 agent,一只手 shell,接任意 Anthropic/OpenAI 兼容模型,比如 DeepSeek);三种在手机上用法一样,审阅与批注通用。
+- **自己的服务器、自己的 key**:代码全开源(MIT),数据只在你的机器上;模型可用 Claude 订阅、Anthropic API key、DeepSeek key、ChatGPT 账号(Codex)或任一兼容端点(傻循环)。
 
 ![原理图](docs/architecture.png)
 
@@ -41,7 +42,33 @@ AI 会问你的,提前准备好就更快:
 2. 首页「+ 新建终端」,一句话派活,例如:「把 大纲.md 改写成 5 页幻灯片提纲,写完交我审阅。」
 3. 卡片「点击进入审阅」→ 划选段落写批注 →「提交反馈」→ AI 按批注改完重新交付。
 
-离线自检(不联网、不调模型):`npm run selftest`
+离线自检(不联网、不调模型):`npm run selftest`(含 Codex / 傻循环的适配器自测)
+
+## 三种终端
+
+新建终端时在「Actor 类型」里选。三种共用同一个工作区和同一套审阅约定(AI 回复里单独一行 `[SHARE:文件绝对路径]` 弹出审阅卡,批注回来逐条改、改完重交)。
+
+| 终端 | 是什么 | 需要什么 |
+|---|---|---|
+| Claude Code(默认) | Anthropic 官方 CLI,每终端常驻一个进程,能力最全 | `claude` 命令 + Claude 订阅登录,或 `ANTHROPIC_API_KEY` / `DEEPSEEK_API_KEY` |
+| Codex | OpenAI Codex CLI,每句话起一次 `codex exec --json`,空闲不占内存 | `codex` 命令 + `codex login`(ChatGPT 账号或 API key) |
+| 傻循环 | 极简 agent 循环:一只手 `run`(shell,多条并行)、90% 自动压缩、Anthropic/OpenAI 两种方言、任意模型 | python3 ≥ 3.8 + 一个模型接口(`LIFE_API`/`LIFE_KEY`/`LIFE_MODEL`,或只填 `DEEPSEEK_API_KEY`) |
+
+每种怎么装、怎么开、缺了会怎样,逐项写在 [`AGENTS.md`](AGENTS.md)「三种终端」一节;缺什么都会在终端里回一句中文指引,不会静默没反应。
+
+### 三种终端的内存
+
+同一个小任务(「写一份三段的短文,保存后交我审阅」→ 收到批注 → 改完重交),三种终端各跑 5 次,取中位数。口径:该终端的**池进程 + 全部子孙进程**(适配器、`claude` / `codex` / `python3` 等)的 RSS 之和(含共享库,会略高估);**基线** = 服务起来、还没建终端时池进程的内存;**空闲** = 任务做完、等 4 秒后;**峰值** = 全程每 200ms 采样的最大值。服务本体与前端不计入。
+
+| 终端 | 池进程基线 | 空闲(任务后) | 峰值 | 首次出审阅卡 / 批注后重交(中位) |
+|---|---|---|---|---|
+| Claude Code | 75 MB | 435 MB | 453 MB | 22 s / 10 s |
+| Codex | 70 MB | 125 MB | 340 MB | 16 s / 18 s |
+| 傻循环(DeepSeek) | 70 MB | 125 MB | 185 MB | 7 s / 4 s |
+
+模型:Claude Code 用 Sonnet 5,Codex 用本机默认(ChatGPT 账号登录),傻循环用 DeepSeek V4 Flash;5 次全部成功。读法:Claude Code 的 `claude` 进程(加两个内置 MCP 进程)任务做完后仍常驻,空闲就是 435 MB;Codex 与傻循环每句话才起一个 `codex` / `python3` 进程,做完即灭,空闲只剩适配器(125 MB,其中约 70 MB 是池进程自己带的 SQLite 与 Node 运行时,三种终端都有);Codex 峰值高是因为 `codex` 本体加它的执行沙箱进程。5 次的空闲值落在 433–443 / 124–125 / 124–125 MB,峰值落在 445–455 / 335–347 / 184–185 MB,分散很小。
+
+复现:`node scripts/e2e-terminal.mjs <cc|codex|life>`(会真调模型,花额度;输出 JSON 含上表各项)。机器、模型和网络不同,数会不同,量级可参考。
 
 ## 结构
 
@@ -50,6 +77,9 @@ AI 会问你的,提前准备好就更快:
 | `src/main.mjs` | 启动:消息总线 → 广播 → 终端池 → HTTP/WS |
 | `src/bus.mjs` | 消息总线(SQLite,`data/bus.db`) |
 | `src/pools/cc/` | Claude Code 终端池(stream-json 子进程) |
+| `src/pools/codex/` + `adapters/codex/` | Codex 终端:`codex exec --json` 每轮一次,事件翻译成消息 |
+| `src/pools/life/` + `adapters/life/` | 傻循环终端:Node 适配器 + Python 本体(`basic.py` 循环、`call.py` 两种方言、`run.py` 手、`see.py` 折叠、`compress.py` 压缩) |
+| `scripts/e2e-terminal.mjs` | 三种终端的真机端到端 + 进程树内存采样 |
 | `src/pools/chat/` + `adapters/chat/` | 慢聊:轻量对话 agent(DeepSeek 或任意 Anthropic 兼容网关) |
 | `src/share.mjs` `src/api/review.mjs` `src/api/share-feedback.mjs` | 审阅系统:[SHARE] 标记 → 审阅卡 → 批注 → 回投 |
 | `src/public/` | 前端(PWA);`review.html` 是审阅页 |

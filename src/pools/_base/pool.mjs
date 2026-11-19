@@ -17,6 +17,7 @@ import readline from 'readline';
 import { spawn } from 'child_process';
 import { writeFileSync, existsSync, readFileSync } from 'fs';
 import Database from 'better-sqlite3';
+import { parseAndExtractShares } from '../../share.mjs';
 
 export const PROTOCOL_VERSION = 1;
 export const OPS = ['start', 'deliver', 'stop', 'control'];
@@ -427,7 +428,10 @@ export class BasePool {
 
   emitText(actorId, entry, text) {
     if (!entry.lastFrom) return;
-    this._insertMessage(actorId, entry.lastFrom, 'text', { text });
+    // 拆 [SHARE:path] → 干净文本 + 独立 share 消息(与 cc-pool 同款;审阅卡靠它弹出)
+    const { cleanText, shares } = parseAndExtractShares(text, actorId);
+    if (cleanText) this._insertMessage(actorId, entry.lastFrom, 'text', { text: cleanText });
+    for (const sh of shares) this._insertMessage(actorId, entry.lastFrom, 'share', sh);
   }
 
   emitToolCall(actorId, entry, ev) {

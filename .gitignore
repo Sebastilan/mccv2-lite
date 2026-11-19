@@ -6,3 +6,5 @@ src/public/dist/
 src/public/lib/fonts/
 .env
 *.log
+__pycache__/
+*.pyc

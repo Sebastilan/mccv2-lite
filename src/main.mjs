@@ -75,6 +75,16 @@ poolSupervisor.register('chat', {
   scriptPath: path.join(ROOT, 'src', 'pools', 'chat', 'chat-pool.mjs'),
   pidFile: path.join(ROOT, 'sockets', 'chat-pool.pid'),
 });
+// 注册 codex pool（OpenAI Codex CLI，stdio v1 原生，每轮 codex exec --json）
+poolSupervisor.register('codex', {
+  scriptPath: path.join(ROOT, 'src', 'pools', 'codex', 'codex-pool.mjs'),
+  pidFile: path.join(ROOT, 'sockets', 'codex-pool.pid'),
+});
+// 注册 life pool（傻循环：一只手 run(shell)，Python 本体）
+poolSupervisor.register('life', {
+  scriptPath: path.join(ROOT, 'src', 'pools', 'life', 'life-pool.mjs'),
+  pidFile: path.join(ROOT, 'sockets', 'life-pool.pid'),
+});
 broadcaster.setPoolSupervisor(poolSupervisor);
 
 // 「慢聊」pin 槽位：chat 是 mccv2 一等公民，开机幂等 seed 一张常驻占位卡。

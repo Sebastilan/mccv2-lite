@@ -51,6 +51,7 @@ export const MODEL_LABELS = {
   'claude-haiku-4-5-20251001': 'Haiku 4.5',
   'deepseek-v4-pro': 'DeepSeek V4 Pro',
   'deepseek-v4-flash': 'DeepSeek V4 Flash',
+  '': '默认（按 .env / 本机配置）',
 };
 
 // ─── 慢聊（chat）可选模型：deepseek-* 直连 DeepSeek（DEEPSEEK_API_KEY），
@@ -61,9 +62,17 @@ export const CHAT_MODELS = [
   'claude-opus-5-5', 'claude-sonnet-5', 'claude-fable-5-1',
 ];
 
+// ─── Codex 终端：空串 = 按本机 codex 配置(~/.codex/config.toml)，也可手填别的模型到 meta.model ───
+export const CODEX_MODELS = [''];
+
+// ─── 傻循环终端：空串 = 按 .env(LIFE_MODEL / DEEPSEEK_API_KEY…)；其余发给 adapters/life/life.mjs 解析的接口 ───
+export const LIFE_MODELS = ['', 'deepseek-v4-flash', 'deepseek-v4-pro', 'claude-sonnet-5', 'claude-opus-5-5'];
+
 /** kind → 可选模型 id 数组；cc 返回 null（表示要去问 /api/provider）。 */
 export function modelsForKind(kind) {
   if (kind === 'chat') return CHAT_MODELS;
+  if (kind === 'codex') return CODEX_MODELS;
+  if (kind === 'life') return LIFE_MODELS;
   return null;
 }
 

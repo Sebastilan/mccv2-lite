@@ -6,13 +6,7 @@ import path from 'path';
 import { resolveByModel } from '../../providers/_registry.mjs';
 import { startCaptureProxy } from './capture-proxy.mjs';
 
-// 工作区约定：开源版新建终端不选路径，所有终端共用 MCC_WORKSPACE；分目录由 AI 自己定，不问用户
-const WORKSPACE_RULE = '当前目录是多个终端共用的工作区。开始一件新任务、要产出不止一两个文件时，'
-  + '自己在当前目录下建一个按任务命名的子目录（中文或英文短名，已有同名就沿用）在里面干；不要问用户放哪。\n';
-
-const REVIEW_RULE = WORKSPACE_RULE + '交付要用户过目的文件（报告、代码、图、PDF 等）时，把文件写在工作区内或 /tmp 下，'
-  + '并在回复里单独一行写 [SHARE:文件绝对路径]，用户会在手机/网页上逐段批注。'
-  + '收到「### 对 xxx 的批注（N 条）」时：逐条修改同一文件，改完重新 [SHARE:同一路径]，并逐条说明怎么改的。';
+import { REVIEW_RULE } from '../_base/review-rule.mjs';
 
 function findClaude() {
   const candidates = [
