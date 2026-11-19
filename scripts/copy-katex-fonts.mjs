@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
-const DEST = path.join(ROOT, 'src/public/lib/fonts');
+const DEST = path.join(ROOT, 'web/lib/fonts');
 
 const require = createRequire(import.meta.url);
 let src;
@@ -27,4 +27,4 @@ for (const f of fs.readdirSync(src)) {
   fs.copyFileSync(path.join(src, f), path.join(DEST, f));
   n++;
 }
-console.log(`[copy-katex-fonts] ${n} 个字体 → src/public/lib/fonts`);
+console.log(`[copy-katex-fonts] ${n} 个字体 → web/lib/fonts`);

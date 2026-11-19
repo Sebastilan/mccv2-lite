@@ -1,9 +1,9 @@
-// build-frontend.mjs — 写侧：把 src/public/{app.js, style.css} 打包为带 hash 的 dist
+// build-frontend.mjs — 写侧：把 web/{app.js, style.css} 打包为带 hash 的 dist
 //
 // 输出（每个资源 5 个文件）：
 //   dist/app.<hash>.js   + .br + .gz + .map
 //   dist/style.<hash>.css + .br + .gz + .map
-//   dist/manifest.json   契约文件，给 src/frontend-bundle.mjs 读
+//   dist/manifest.json   契约文件，给 server/http/frontend-bundle.mjs 读
 //
 // 用法：node scripts/build-frontend.mjs [--watch]
 
@@ -15,7 +15,7 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
-const PUBLIC = path.join(ROOT, 'src/public');
+const PUBLIC = path.join(ROOT, 'web');
 const DIST = path.join(PUBLIC, 'dist');
 
 // esbuild config：entry 对象形式，key 即输出 basename
@@ -46,7 +46,7 @@ function precompress(filePath) {
 }
 
 // 从 metafile.outputs 反推 (srcName → distPath) 映射
-//   outputs key 形如 "src/public/dist/app.HLQXICQJ.js"
+//   outputs key 形如 "web/dist/app.HLQXICQJ.js"
 //   srcName = basename split 第一段 + ext  →  "app.js"
 function buildAssetMap(metafile) {
   const assets = {};

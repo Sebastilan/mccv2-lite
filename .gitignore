@@ -2,8 +2,8 @@ node_modules/
 data/
 sockets/
 logs/
-src/public/dist/
-src/public/lib/fonts/
+web/dist/
+web/lib/fonts/
 .env
 *.log
 __pycache__/

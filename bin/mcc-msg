@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // mcc-msg — 发消息工具（一次性 Actor: connect → register → send → leave）
-import { Actor } from '../src/sdk/index.mjs';
+import { Actor } from '../server/sdk/index.mjs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 

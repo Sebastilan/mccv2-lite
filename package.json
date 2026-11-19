@@ -4,9 +4,10 @@
   "type": "module",
   "description": "手机上指挥服务器里的 Claude Code 终端，并在原文上批注 AI 交付的文件",
   "scripts": {
-    "start": "node src/main.mjs",
+    "start": "node server/main.mjs",
     "build": "node scripts/build-frontend.mjs",
-    "selftest": "node 测试/selftest.mjs",
+    "selftest": "node test/selftest.mjs",
+    "e2e": "node test/e2e-terminal.mjs",
     "postinstall": "node scripts/copy-katex-fonts.mjs"
   },
   "dependencies": {
